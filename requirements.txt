@@ -2,9 +2,20 @@ fastapi
 uvicorn
 sqlalchemy
 passlib[bcrypt]
+bcrypt
 python-jose[cryptography]
 python-multipart
 python-dotenv
 requests
 pydantic
 email-validator
+
+# AI
+groq
+google-generativeai
+
+# Email
+jinja2
+
+# Database
+psycopg2-binary

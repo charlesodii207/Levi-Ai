@@ -24,10 +24,17 @@ app = FastAPI(
     description="Premium AI Assistant"
 )
 
-# CORS — allow frontend to talk to backend
+# Allowed Frontend Origins
+origins = [
+    "http://localhost:3000",
+    "https://levi-ai-frontend.vercel.app",
+    "https://levi-ai-frontend-git-master-leviai.vercel.app",
+]
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,7 +65,6 @@ def custom_openapi():
         }
     }
 
-    # Apply Bearer authentication to all endpoints except the root endpoint
     for path_name, path in schema["paths"].items():
         if path_name == "/":
             continue

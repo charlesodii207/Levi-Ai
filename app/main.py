@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
 
@@ -21,6 +22,15 @@ app = FastAPI(
     title="Levi AI",
     version="1.0.0",
     description="Premium AI Assistant"
+)
+
+# CORS — allow frontend to talk to backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Register routers

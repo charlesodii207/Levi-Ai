@@ -14,6 +14,7 @@ from app.models.memory import Memory
 from app.api.users import router as user_router
 from app.api.chat import router as chat_router
 from app.api.conversation import router as conversation_router
+from app.api.memory import router as memory_router
 
 # Create all database tables
 Base.metadata.create_all(bind=engine)
@@ -24,17 +25,14 @@ app = FastAPI(
     description="Premium AI Assistant"
 )
 
-# Allowed Frontend Origins
-origins = [
-    "http://localhost:3000",
-    "https://levi-ai-frontend.vercel.app",
-    "https://levi-ai-frontend-git-master-leviai.vercel.app",
-]
-
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://levi-ai-frontend.vercel.app",
+        "https://*.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,6 +42,7 @@ app.add_middleware(
 app.include_router(user_router)
 app.include_router(chat_router)
 app.include_router(conversation_router)
+app.include_router(memory_router)
 
 
 def custom_openapi():
@@ -68,7 +67,6 @@ def custom_openapi():
     for path_name, path in schema["paths"].items():
         if path_name == "/":
             continue
-
         for method in path.values():
             method["security"] = [{"BearerAuth": []}]
 

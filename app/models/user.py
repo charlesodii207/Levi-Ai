@@ -22,16 +22,25 @@ class User(Base):
     otp_code = Column(String, nullable=True)
     otp_expiry = Column(DateTime, nullable=True)
 
-    # Relationship with conversations
+    # NEW — populated on login, used by the admin dashboard
+    last_login_at = Column(DateTime, nullable=True)
+    last_login_ip = Column(String, nullable=True)
+
+    # Relationships
     conversations = relationship(
         "Conversation",
         back_populates="user",
         cascade="all, delete-orphan"
     )
 
-    # Relationship with memories
     memories = relationship(
         "Memory",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+    knowledge_base = relationship(
+        "KnowledgeBase",
         back_populates="user",
         cascade="all, delete-orphan"
     )

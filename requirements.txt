@@ -18,7 +18,14 @@ google-generativeai==0.8.5
 
 # Email
 jinja2==3.1.6
+resend==2.0.0
 
 # Database
 psycopg2-binary==2.9.10
-resend==2.0.0
+
+# Knowledge Base / RAG
+supabase==2.15.2
+pypdf2==3.0.1
+python-docx==1.1.2
+pillow==11.2.1
+pytesseract==0.3.13

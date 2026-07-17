@@ -215,6 +215,7 @@ def list_admins(
 
 class ChangeTierRequest(BaseModel):
     new_tier: str
+    platform_role: Optional[str] = None
 
 
 @router.post("/admins/{admin_id}/change-tier")
@@ -238,15 +239,20 @@ def change_admin_tier(
             detail="You don't have permission to change this admin's tier.",
         )
 
-    old_tier = target.tier
-    target.tier = data.new_tier
-
-    # Platform role only makes sense for Tier 3 — clear it if they're
-    # moving out of Administrator, it'll need to be reassigned if
-    # they're moved into Administrator later.
-    if data.new_tier != "admin":
+    # Moving someone INTO Administrator requires a department, same
+    # rule as account creation. Moving them OUT clears it.
+    if data.new_tier == "admin":
+        if not data.platform_role or data.platform_role not in PLATFORM_ROLES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Administrator accounts require a platform_role, one of: {', '.join(PLATFORM_ROLES)}.",
+            )
+        target.platform_role = data.platform_role
+    else:
         target.platform_role = None
 
+    old_tier = target.tier
+    target.tier = data.new_tier
     db.commit()
 
     log_action(

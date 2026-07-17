@@ -13,6 +13,7 @@ from app.models.message import Message
 from app.models.memory import Memory
 from app.models.admin import Admin
 from app.models.admin_action_log import AdminActionLog
+from app.models.knowledge_base import KnowledgeBase
 
 # Import API routers
 from app.api.users import router as user_router

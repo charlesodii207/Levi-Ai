@@ -28,16 +28,16 @@ from app.auth.security import hash_password
 Base.metadata.create_all(bind=engine)
 
 
-def seed_senior_admin():
+def seed_owner_admin():
     """
-    Creates the very first senior admin account on startup, using
-    credentials from environment variables. Only runs if no senior
-    admin exists yet — after your first login and password change,
-    this becomes a permanent no-op.
+    Creates the very first System Owner account on startup, using
+    credentials from environment variables. Only runs if no owner
+    exists yet — after your first login and password change, this
+    becomes a permanent no-op.
     """
     db = SessionLocal()
     try:
-        existing = db.query(Admin).filter(Admin.role == "senior").first()
+        existing = db.query(Admin).filter(Admin.tier == "owner").first()
         if existing:
             return
 
@@ -51,7 +51,7 @@ def seed_senior_admin():
         admin = Admin(
             username=username,
             hashed_password=hash_password(password),
-            role="senior",
+            tier="owner",
             status="active",
             must_change_password=True,
         )
@@ -61,7 +61,7 @@ def seed_senior_admin():
         db.close()
 
 
-seed_senior_admin()
+seed_owner_admin()
 
 app = FastAPI(
     title="Levi AI",

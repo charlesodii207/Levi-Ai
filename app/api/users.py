@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
@@ -21,6 +21,7 @@ from app.auth.jwt import create_access_token
 
 from app.utils.otp import generate_otp
 from app.utils.email import send_otp_email
+from app.utils.ip import get_client_ip
 
 router = APIRouter()
 
@@ -201,7 +202,7 @@ def resend_otp(
     except Exception:
         raise HTTPException(
             status_code=500,
-            detail="Failed to send OTP email."
+            detail="Failed to resend OTP email."
         )
 
     return {
@@ -215,6 +216,7 @@ def resend_otp(
 @router.post("/login", response_model=TokenResponse)
 def login(
     user: UserLogin,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     db_user = db.query(User).filter(
@@ -247,6 +249,11 @@ def login(
             status_code=400,
             detail="Please verify your email first."
         )
+
+    # NEW — record when and where this login happened
+    db_user.last_login_at = datetime.now(timezone.utc)
+    db_user.last_login_ip = get_client_ip(request)
+    db.commit()
 
     access_token = create_access_token(
         {"sub": str(db_user.id)}

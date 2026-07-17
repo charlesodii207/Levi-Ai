@@ -29,6 +29,7 @@ class AdminOut(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime] = None
     last_login_ip: Optional[str] = None
+    last_active_at: Optional[datetime] = None  # NEW — powers online dot
 
     class Config:
         from_attributes = True
@@ -50,6 +51,7 @@ class UserAdminOut(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime] = None
     last_login_ip: Optional[str] = None
+    last_active_at: Optional[datetime] = None  # NEW — powers online dot
 
     class Config:
         from_attributes = True

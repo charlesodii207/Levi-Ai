@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -47,6 +49,20 @@ def get_current_user(
             detail="User not found",
         )
 
+    # Critical: without this check, a suspended user's existing token
+    # keeps working until it expires — suspension only blocked new
+    # logins, not requests from an already-issued token.
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been suspended.",
+        )
+
+    # Powers real "online now" status — updated on every authenticated
+    # request, not just at login, so it reflects actual activity.
+    user.last_active_at = datetime.now(timezone.utc)
+    db.commit()
+
     return user
 
 
@@ -88,6 +104,10 @@ def _decode_admin_token(token: str, db: Session) -> Admin:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This admin account has been blocked.",
         )
+
+    # Same online-tracking pattern as regular users
+    admin.last_active_at = datetime.now(timezone.utc)
+    db.commit()
 
     return admin
 

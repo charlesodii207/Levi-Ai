@@ -22,9 +22,14 @@ class User(Base):
     otp_code = Column(String, nullable=True)
     otp_expiry = Column(DateTime, nullable=True)
 
-    # NEW — populated on login, used by the admin dashboard
+    # Set on login only
     last_login_at = Column(DateTime, nullable=True)
     last_login_ip = Column(String, nullable=True)
+
+    # NEW — updated on every authenticated request (not just login).
+    # This is what powers real "online now" status, since a user can
+    # be logged in for days without actually being active right now.
+    last_active_at = Column(DateTime, nullable=True)
 
     # Relationships
     conversations = relationship(

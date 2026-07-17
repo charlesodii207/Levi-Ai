@@ -24,8 +24,13 @@ class Admin(Base):
     created_by = Column(Integer, ForeignKey("admins.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+    # Set on login only
     last_login_at = Column(DateTime, nullable=True)
     last_login_ip = Column(String, nullable=True)
+
+    # NEW — updated on every authenticated admin request, powers
+    # "online now" status the same way it does for regular users.
+    last_active_at = Column(DateTime, nullable=True)
 
     action_logs = relationship(
         "AdminActionLog",

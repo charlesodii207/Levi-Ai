@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,8 +19,22 @@ from app.schemas.admin import (
 )
 from app.auth.security import hash_password, verify_password
 from app.auth.jwt import create_access_token
-from app.dependencies import get_current_admin, get_current_admin_raw, require_senior
+from app.dependencies import (
+    get_current_admin,
+    get_current_admin_raw,
+    require_owner_or_super,
+    require_admin_module_access,
+)
 from app.utils.ip import get_client_ip
+from app.core.tiers import (
+    VALID_TIERS,
+    PLATFORM_ROLES,
+    can_create,
+    can_manage,
+    can_promote_demote,
+    can_delete_user,
+    visible_tiers_for,
+)
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -45,6 +60,36 @@ def log_action(
     db.commit()
 
 
+def serialize_admin_for_viewer(viewer: Admin, target: Admin) -> dict:
+    """
+    Builds the admin dict returned to the frontend, masking peer-level
+    data per the visibility model: a Tier 3 (Administrator) viewing
+    another Tier 3 peer sees everything except Status, Last IP, and
+    Last Active — those are only visible for Tier 4 (Moderator) records
+    or when the viewer outranks the target.
+    """
+    data = {
+        "id": target.id,
+        "username": target.username,
+        "tier": target.tier,
+        "platform_role": target.platform_role,
+        "status": target.status,
+        "must_change_password": target.must_change_password,
+        "created_at": target.created_at,
+        "last_login_at": target.last_login_at,
+        "last_login_ip": target.last_login_ip,
+        "last_active_at": target.last_active_at,
+    }
+
+    is_peer_tier3 = viewer.tier == "admin" and target.tier == "admin" and viewer.id != target.id
+    if is_peer_tier3:
+        data["status"] = None
+        data["last_login_ip"] = None
+        data["last_active_at"] = None
+
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -64,7 +109,7 @@ def admin_login(data: AdminLogin, request: Request, db: Session = Depends(get_db
     db.commit()
 
     access_token = create_access_token(
-        {"sub": str(admin.id), "type": "admin", "role": admin.role}
+        {"sub": str(admin.id), "type": "admin", "tier": admin.tier}
     )
 
     return {
@@ -100,18 +145,33 @@ def get_admin_me(admin: Admin = Depends(get_current_admin_raw)):
 
 
 # ---------------------------------------------------------------------------
-# Senior-only — manage other admins
+# Admin management
 # ---------------------------------------------------------------------------
 
 @router.post("/admins", response_model=AdminOut)
 def create_admin(
     data: AdminCreate,
     request: Request,
-    senior: Admin = Depends(require_senior),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    if data.role not in ("senior", "junior"):
-        raise HTTPException(status_code=400, detail="Role must be 'senior' or 'junior'.")
+    if data.tier not in VALID_TIERS:
+        raise HTTPException(status_code=400, detail="Invalid tier.")
+
+    if not can_create(actor.tier, data.tier):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to create an admin at that tier.",
+        )
+
+    if data.tier == "admin":
+        if not data.platform_role or data.platform_role not in PLATFORM_ROLES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Administrator accounts require a platform_role, one of: {', '.join(PLATFORM_ROLES)}.",
+            )
+    else:
+        data.platform_role = None  # only Tier 3 carries a platform role
 
     existing = db.query(Admin).filter(Admin.username == data.username).first()
     if existing:
@@ -120,45 +180,102 @@ def create_admin(
     new_admin = Admin(
         username=data.username,
         hashed_password=hash_password(data.password),
-        role=data.role,
+        tier=data.tier,
+        platform_role=data.platform_role,
         status="active",
         must_change_password=True,
-        created_by=senior.id,
+        created_by=actor.id,
     )
     db.add(new_admin)
     db.commit()
     db.refresh(new_admin)
 
-    log_action(db, senior, "created_admin", request, "admin", new_admin.id, f"role={data.role}")
+    log_action(db, actor, "created_admin", request, "admin", new_admin.id, f"tier={data.tier}")
 
     return new_admin
 
 
 @router.get("/admins", response_model=List[AdminOut])
 def list_admins(
-    senior: Admin = Depends(require_senior),
+    actor: Admin = Depends(require_admin_module_access),
     db: Session = Depends(get_db),
 ):
-    return db.query(Admin).order_by(Admin.created_at.desc()).all()
+    allowed_tiers = visible_tiers_for(actor.tier)
+    if not allowed_tiers:
+        raise HTTPException(status_code=403, detail="You don't have access to the Admins module.")
+
+    admins = (
+        db.query(Admin)
+        .filter(Admin.tier.in_(allowed_tiers))
+        .order_by(Admin.created_at.desc())
+        .all()
+    )
+    return [serialize_admin_for_viewer(actor, a) for a in admins]
+
+
+class ChangeTierRequest(BaseModel):
+    new_tier: str
+
+
+@router.post("/admins/{admin_id}/change-tier")
+def change_admin_tier(
+    admin_id: int,
+    data: ChangeTierRequest,
+    request: Request,
+    actor: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    if data.new_tier not in VALID_TIERS:
+        raise HTTPException(status_code=400, detail="Invalid tier.")
+
+    target = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Admin not found.")
+
+    if not can_promote_demote(actor.tier, target.tier, data.new_tier):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to change this admin's tier.",
+        )
+
+    old_tier = target.tier
+    target.tier = data.new_tier
+
+    # Platform role only makes sense for Tier 3 — clear it if they're
+    # moving out of Administrator, it'll need to be reassigned if
+    # they're moved into Administrator later.
+    if data.new_tier != "admin":
+        target.platform_role = None
+
+    db.commit()
+
+    log_action(
+        db, actor, "changed_admin_tier", request, "admin", target.id,
+        f"{old_tier} -> {data.new_tier}",
+    )
+
+    return {"message": f"'{target.username}' is now {data.new_tier}."}
 
 
 @router.post("/admins/{admin_id}/block")
 def block_admin(
     admin_id: int,
     request: Request,
-    senior: Admin = Depends(require_senior),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     target = db.query(Admin).filter(Admin.id == admin_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Admin not found.")
-    if target.id == senior.id:
+    if target.id == actor.id:
         raise HTTPException(status_code=400, detail="You can't block your own account.")
+    if not can_manage(actor.tier, target.tier):
+        raise HTTPException(status_code=403, detail="You don't have permission to block this admin.")
 
     target.status = "blocked"
     db.commit()
 
-    log_action(db, senior, "blocked_admin", request, "admin", target.id)
+    log_action(db, actor, "blocked_admin", request, "admin", target.id)
 
     return {"message": f"Admin '{target.username}' has been blocked."}
 
@@ -167,24 +284,50 @@ def block_admin(
 def unblock_admin(
     admin_id: int,
     request: Request,
-    senior: Admin = Depends(require_senior),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     target = db.query(Admin).filter(Admin.id == admin_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Admin not found.")
+    if not can_manage(actor.tier, target.tier):
+        raise HTTPException(status_code=403, detail="You don't have permission to unblock this admin.")
 
     target.status = "active"
     db.commit()
 
-    log_action(db, senior, "unblocked_admin", request, "admin", target.id)
+    log_action(db, actor, "unblocked_admin", request, "admin", target.id)
 
     return {"message": f"Admin '{target.username}' has been unblocked."}
 
 
+@router.delete("/admins/{admin_id}")
+def delete_admin(
+    admin_id: int,
+    request: Request,
+    actor: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    target = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Admin not found.")
+    if target.id == actor.id:
+        raise HTTPException(status_code=400, detail="You can't delete your own account.")
+    if not can_manage(actor.tier, target.tier):
+        raise HTTPException(status_code=403, detail="You don't have permission to delete this admin.")
+
+    username = target.username
+    db.delete(target)
+    db.commit()
+
+    log_action(db, actor, "deleted_admin", request, "admin", admin_id, f"username={username}")
+
+    return {"message": f"Admin '{username}' has been permanently deleted."}
+
+
 @router.get("/logs")
 def get_action_logs(
-    senior: Admin = Depends(require_senior),
+    actor: Admin = Depends(require_owner_or_super),
     db: Session = Depends(get_db),
     limit: int = 100,
 ):
@@ -210,12 +353,12 @@ def get_action_logs(
 
 
 # ---------------------------------------------------------------------------
-# Shared (senior + junior) — manage regular users
+# User management — available to every tier (Moderator included)
 # ---------------------------------------------------------------------------
 
 @router.get("/users", response_model=List[UserAdminOut])
 def list_users(
-    admin: Admin = Depends(get_current_admin),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 50,
@@ -232,7 +375,7 @@ def list_users(
 @router.get("/users/{user_id}", response_model=UserAdminOut)
 def get_user(
     user_id: int,
-    admin: Admin = Depends(get_current_admin),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -245,7 +388,7 @@ def get_user(
 def suspend_user(
     user_id: int,
     request: Request,
-    admin: Admin = Depends(get_current_admin),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -255,7 +398,7 @@ def suspend_user(
     user.is_active = False
     db.commit()
 
-    log_action(db, admin, "suspended_user", request, "user", user.id)
+    log_action(db, actor, "suspended_user", request, "user", user.id)
 
     return {"message": f"User '{user.username}' has been suspended."}
 
@@ -264,7 +407,7 @@ def suspend_user(
 def activate_user(
     user_id: int,
     request: Request,
-    admin: Admin = Depends(get_current_admin),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -274,7 +417,7 @@ def activate_user(
     user.is_active = True
     db.commit()
 
-    log_action(db, admin, "activated_user", request, "user", user.id)
+    log_action(db, actor, "activated_user", request, "user", user.id)
 
     return {"message": f"User '{user.username}' has been reactivated."}
 
@@ -283,9 +426,12 @@ def activate_user(
 def delete_user(
     user_id: int,
     request: Request,
-    senior: Admin = Depends(require_senior),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
+    if not can_delete_user(actor.tier):
+        raise HTTPException(status_code=403, detail="You don't have permission to delete users.")
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -294,7 +440,7 @@ def delete_user(
     db.delete(user)
     db.commit()
 
-    log_action(db, senior, "deleted_user", request, "user", user_id, f"username={username}")
+    log_action(db, actor, "deleted_user", request, "user", user_id, f"username={username}")
 
     return {"message": f"User '{username}' has been permanently deleted."}
 
@@ -305,7 +451,7 @@ def delete_user(
 
 @router.get("/stats/overview")
 def get_overview_stats(
-    admin: Admin = Depends(get_current_admin),
+    actor: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     total_users = db.query(User).count()

@@ -8,6 +8,7 @@ from app.auth.jwt import decode_access_token
 from app.database import get_db
 from app.models.user import User
 from app.models.admin import Admin
+from app.core.tiers import rank
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 admin_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/admin/login")
@@ -49,9 +50,8 @@ def get_current_user(
             detail="User not found",
         )
 
-    # Critical: without this check, a suspended user's existing token
-    # keeps working until it expires — suspension only blocked new
-    # logins, not requests from an already-issued token.
+    # A suspended user's existing token must stop working immediately,
+    # not just at their next login attempt.
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -59,7 +59,7 @@ def get_current_user(
         )
 
     # Powers real "online now" status — updated on every authenticated
-    # request, not just at login, so it reflects actual activity.
+    # request, not just at login.
     user.last_active_at = datetime.now(timezone.utc)
     db.commit()
 
@@ -105,7 +105,6 @@ def _decode_admin_token(token: str, db: Session) -> Admin:
             detail="This admin account has been blocked.",
         )
 
-    # Same online-tracking pattern as regular users
     admin.last_active_at = datetime.now(timezone.utc)
     db.commit()
 
@@ -138,13 +137,39 @@ def get_current_admin(
     return admin
 
 
-def require_senior(
-    admin: Admin = Depends(get_current_admin),
-) -> Admin:
-    """Use for senior-only endpoints (managing other admins, deleting users, logs)."""
-    if admin.role != "senior":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Senior admin access required.",
-        )
-    return admin
+def require_tier(*allowed_tiers: str):
+    """
+    Dependency factory — restricts a route to specific tiers.
+    Usage: admin: Admin = Depends(require_tier("owner", "super_admin"))
+    """
+    def _check(admin: Admin = Depends(get_current_admin)) -> Admin:
+        if admin.tier not in allowed_tiers:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this resource.",
+            )
+        return admin
+    return _check
+
+
+def require_max_rank(max_rank: int):
+    """
+    Dependency factory — restricts a route to any tier at or above a
+    given authority level (rank 1 = Owner is the highest authority,
+    so "at or above" means rank <= max_rank).
+    Usage: admin: Admin = Depends(require_max_rank(2))  # owner or super_admin
+    """
+    def _check(admin: Admin = Depends(get_current_admin)) -> Admin:
+        if rank(admin.tier) > max_rank:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this resource.",
+            )
+        return admin
+    return _check
+
+
+# Convenience shortcuts for the most common checks
+require_owner = require_tier("owner")
+require_owner_or_super = require_tier("owner", "super_admin")
+require_admin_module_access = require_max_rank(3)  # owner, super_admin, admin — not moderator

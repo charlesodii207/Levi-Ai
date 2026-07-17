@@ -12,7 +12,8 @@ class AdminLogin(BaseModel):
 class AdminCreate(BaseModel):
     username: str
     password: str
-    role: str = "junior"  # senior can create "junior" or another "senior"
+    tier: str = "moderator"  # "owner" | "super_admin" | "admin" | "moderator"
+    platform_role: Optional[str] = None  # required when tier == "admin"
 
 
 class AdminChangePassword(BaseModel):
@@ -23,13 +24,17 @@ class AdminChangePassword(BaseModel):
 class AdminOut(BaseModel):
     id: int
     username: str
-    role: str
-    status: str
-    must_change_password: bool
-    created_at: datetime
+    tier: str
+    platform_role: Optional[str] = None
+    # These three come back as null when the viewer is a Tier 3 peer
+    # looking at another Tier 3 admin — see serialize_admin_for_viewer
+    # in app/api/admin.py for the masking logic.
+    status: Optional[str] = None
     last_login_at: Optional[datetime] = None
     last_login_ip: Optional[str] = None
-    last_active_at: Optional[datetime] = None  # NEW — powers online dot
+    last_active_at: Optional[datetime] = None
+    must_change_password: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -51,7 +56,7 @@ class UserAdminOut(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime] = None
     last_login_ip: Optional[str] = None
-    last_active_at: Optional[datetime] = None  # NEW — powers online dot
+    last_active_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

@@ -23,6 +23,7 @@ from app.api.conversation import router as conversation_router
 from app.api.memory import router as memory_router
 from app.api.admin import router as admin_router
 from app.api.appeals import router as appeals_router
+from app.api.knowledge_base import router as knowledge_router
 
 from app.auth.security import hash_password
 
@@ -31,12 +32,6 @@ Base.metadata.create_all(bind=engine)
 
 
 def seed_owner_admin():
-    """
-    Creates the very first System Owner account on startup, using
-    credentials from environment variables. Only runs if no owner
-    exists yet — after your first login and password change, this
-    becomes a permanent no-op.
-    """
     db = SessionLocal()
     try:
         existing = db.query(Admin).filter(Admin.tier == "owner").first()
@@ -47,7 +42,6 @@ def seed_owner_admin():
         password = os.getenv("SENIOR_ADMIN_PASSWORD")
 
         if not username or not password:
-            # Env vars not set — skip silently, nothing to seed yet
             return
 
         admin = Admin(
@@ -91,6 +85,7 @@ app.include_router(conversation_router)
 app.include_router(memory_router)
 app.include_router(admin_router)
 app.include_router(appeals_router)
+app.include_router(knowledge_router)
 
 
 def custom_openapi():

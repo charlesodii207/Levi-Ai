@@ -13,6 +13,7 @@ from app.api.users import get_current_user
 from app.models.user import User
 from app.services.ai_service import generate_response, generate_response_stream, generate_title
 from app.services.memory_service import get_user_memories, format_memories_for_prompt, extract_and_save_memories
+from app.services.rag_service import get_context_for_query
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -107,6 +108,11 @@ def chat(
     if memory_context:
         history = [{"role": "system", "content": memory_context}] + history
 
+    # 3b. Load relevant knowledge base context and inject into prompt
+    kb_context = get_context_for_query(db, current_user.id, request.message)
+    if kb_context:
+        history = [{"role": "system", "content": f"Relevant knowledge base context:\n\n{kb_context}"}] + history
+
     # 4. Save user message
     user_msg = Message(conversation_id=conversation.id, role="user", content=request.message)
     db.add(user_msg)
@@ -174,6 +180,11 @@ def chat_stream(
     memory_context = format_memories_for_prompt(memories)
     if memory_context:
         history = [{"role": "system", "content": memory_context}] + history
+
+    # 3b. Load relevant knowledge base context and inject into prompt
+    kb_context = get_context_for_query(db, current_user.id, request.message)
+    if kb_context:
+        history = [{"role": "system", "content": f"Relevant knowledge base context:\n\n{kb_context}"}] + history
 
     # 4. Save user message
     user_msg = Message(conversation_id=conversation.id, role="user", content=request.message)

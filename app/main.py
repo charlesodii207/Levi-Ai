@@ -14,6 +14,7 @@ from app.models.memory import Memory
 from app.models.admin import Admin
 from app.models.admin_action_log import AdminActionLog
 from app.models.knowledge_base import KnowledgeBase
+from app.models.suspension_appeal import SuspensionAppeal
 
 # Import API routers
 from app.api.users import router as user_router
@@ -21,6 +22,7 @@ from app.api.chat import router as chat_router
 from app.api.conversation import router as conversation_router
 from app.api.memory import router as memory_router
 from app.api.admin import router as admin_router
+from app.api.appeals import router as appeals_router
 
 from app.auth.security import hash_password
 
@@ -88,6 +90,7 @@ app.include_router(chat_router)
 app.include_router(conversation_router)
 app.include_router(memory_router)
 app.include_router(admin_router)
+app.include_router(appeals_router)
 
 
 def custom_openapi():

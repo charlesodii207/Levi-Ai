@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models.admin import Admin
 from app.models.admin_action_log import AdminActionLog
 from app.models.user import User
+from app.models.suspension_appeal import SuspensionAppeal
 from app.schemas.admin import (
     AdminLogin,
     AdminCreate,
@@ -17,6 +18,7 @@ from app.schemas.admin import (
     AdminTokenResponse,
     UserAdminOut,
 )
+from app.schemas.appeal import AppealOut
 from app.auth.security import hash_password, verify_password
 from app.auth.jwt import create_access_token
 from app.dependencies import (
@@ -489,6 +491,72 @@ def delete_user(
     log_action(db, actor, "deleted_user", request, "user", user_id, f"username={username}")
 
     return {"message": f"User '{username}' has been permanently deleted."}
+
+
+# ---------------------------------------------------------------------------
+# Suspension appeals — Owner, Super Admin, Administrator (not Moderator)
+# ---------------------------------------------------------------------------
+
+@router.get("/appeals", response_model=List[AppealOut])
+def list_appeals(
+    actor: Admin = Depends(require_admin_module_access),
+    db: Session = Depends(get_db),
+    status: Optional[str] = None,
+):
+    query = db.query(SuspensionAppeal)
+    if status:
+        query = query.filter(SuspensionAppeal.status == status)
+    return query.order_by(SuspensionAppeal.created_at.desc()).all()
+
+
+@router.post("/appeals/{appeal_id}/approve")
+def approve_appeal(
+    appeal_id: int,
+    request: Request,
+    actor: Admin = Depends(require_admin_module_access),
+    db: Session = Depends(get_db),
+):
+    appeal = db.query(SuspensionAppeal).filter(SuspensionAppeal.id == appeal_id).first()
+    if not appeal:
+        raise HTTPException(status_code=404, detail="Appeal not found.")
+    if appeal.status != "pending":
+        raise HTTPException(status_code=400, detail="This appeal has already been resolved.")
+
+    user = db.query(User).filter(User.id == appeal.user_id).first()
+    if user:
+        user.is_active = True
+
+    appeal.status = "approved"
+    appeal.resolved_at = datetime.now(timezone.utc)
+    appeal.resolved_by = actor.id
+    db.commit()
+
+    log_action(db, actor, "approved_appeal", request, "user", appeal.user_id, f"appeal_id={appeal.id}")
+
+    return {"message": f"Appeal approved. '{appeal.email}' has been reactivated."}
+
+
+@router.post("/appeals/{appeal_id}/reject")
+def reject_appeal(
+    appeal_id: int,
+    request: Request,
+    actor: Admin = Depends(require_admin_module_access),
+    db: Session = Depends(get_db),
+):
+    appeal = db.query(SuspensionAppeal).filter(SuspensionAppeal.id == appeal_id).first()
+    if not appeal:
+        raise HTTPException(status_code=404, detail="Appeal not found.")
+    if appeal.status != "pending":
+        raise HTTPException(status_code=400, detail="This appeal has already been resolved.")
+
+    appeal.status = "rejected"
+    appeal.resolved_at = datetime.now(timezone.utc)
+    appeal.resolved_by = actor.id
+    db.commit()
+
+    log_action(db, actor, "rejected_appeal", request, "user", appeal.user_id, f"appeal_id={appeal.id}")
+
+    return {"message": f"Appeal rejected."}
 
 
 # ---------------------------------------------------------------------------

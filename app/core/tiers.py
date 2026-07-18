@@ -120,13 +120,10 @@ def can_delete_user(actor_tier: str) -> bool:
 def can_reset_password(actor_tier: str, target_tier: str) -> bool:
     """
     Can actor force-reset the target admin's password?
-    Deliberately looser than can_manage: a Super Admin may reset
-    another Super Admin's password (account recovery), even though
-    Super Admins can't otherwise act on their own peers. Owner is
-    still completely untouchable.
+    Owner only, for now — every reset carries a brief window where
+    whoever generates the temp password could log in before the real
+    account holder does. Keeping this concentrated in a single,
+    always-accountable account minimizes that exposure until email
+    reset-notifications are in place.
     """
-    if actor_tier == "owner":
-        return target_tier != "owner"
-    if actor_tier == "super_admin":
-        return target_tier in ("super_admin", "admin", "moderator")
-    return False  # admin, moderator cannot reset anyone's password
+    return actor_tier == "owner" and target_tier != "owner"

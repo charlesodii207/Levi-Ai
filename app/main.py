@@ -24,6 +24,7 @@ from app.api.memory import router as memory_router
 from app.api.admin import router as admin_router
 from app.api.appeals import router as appeals_router
 from app.api.knowledge_base import router as knowledge_router
+from app.api.chat_attachments import router as chat_attachments_router
 
 from app.auth.security import hash_password
 
@@ -86,6 +87,7 @@ app.include_router(memory_router)
 app.include_router(admin_router)
 app.include_router(appeals_router)
 app.include_router(knowledge_router)
+app.include_router(chat_attachments_router)
 
 
 def custom_openapi():

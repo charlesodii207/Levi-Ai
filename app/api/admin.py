@@ -31,6 +31,7 @@ from app.core.tiers import (
     PLATFORM_ROLES,
     can_create,
     can_manage,
+    can_delete_admin,
     can_promote_demote,
     can_delete_user,
     visible_tiers_for,
@@ -319,7 +320,7 @@ def delete_admin(
         raise HTTPException(status_code=404, detail="Admin not found.")
     if target.id == actor.id:
         raise HTTPException(status_code=400, detail="You can't delete your own account.")
-    if not can_manage(actor.tier, target.tier):
+    if not can_delete_admin(actor.tier, target.tier):
         raise HTTPException(status_code=403, detail="You don't have permission to delete this admin.")
 
     username = target.username

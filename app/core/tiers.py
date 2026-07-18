@@ -68,8 +68,8 @@ def can_create(actor_tier: str, target_tier: str) -> bool:
 
 def can_manage(actor_tier: str, target_tier: str) -> bool:
     """
-    Can actor suspend/unsuspend/delete/edit the target admin account?
-    (The baseline "act on another admin" check.)
+    Can actor suspend/unsuspend/edit the target admin account?
+    (Block/unblock authority — NOT the same as delete, see can_delete_admin.)
     """
     if actor_tier == "owner":
         return target_tier != "owner"
@@ -78,6 +78,20 @@ def can_manage(actor_tier: str, target_tier: str) -> bool:
     if actor_tier == "admin":
         return target_tier == "moderator"
     return False  # moderator can never manage another admin
+
+
+def can_delete_admin(actor_tier: str, target_tier: str) -> bool:
+    """
+    Can actor permanently delete the target admin account?
+    Stricter than can_manage — deletion stays with Owner and Super
+    Admin only. Administrator can suspend/block a Moderator but was
+    never granted delete authority over them.
+    """
+    if actor_tier == "owner":
+        return target_tier != "owner"
+    if actor_tier == "super_admin":
+        return target_tier in ("admin", "moderator")
+    return False  # admin, moderator cannot delete anyone
 
 
 def can_promote_demote(actor_tier: str, target_tier: str, new_tier: str) -> bool:

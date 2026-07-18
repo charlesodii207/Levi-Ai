@@ -34,8 +34,11 @@ from app.core.tiers import (
     can_delete_admin,
     can_promote_demote,
     can_delete_user,
+    can_reset_password,
     visible_tiers_for,
 )
+import secrets
+import string
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -306,6 +309,42 @@ def unblock_admin(
     log_action(db, actor, "unblocked_admin", request, "admin", target.id)
 
     return {"message": f"Admin '{target.username}' has been unblocked."}
+
+
+def generate_temp_password(length: int = 12) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+@router.post("/admins/{admin_id}/reset-password")
+def reset_admin_password(
+    admin_id: int,
+    request: Request,
+    actor: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    target = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Admin not found.")
+
+    if not can_reset_password(actor.tier, target.tier):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to reset this admin's password.",
+        )
+
+    temp_password = generate_temp_password()
+    target.hashed_password = hash_password(temp_password)
+    target.must_change_password = True
+    db.commit()
+
+    log_action(db, actor, "reset_admin_password", request, "admin", target.id)
+
+    # Shown once — the actor is responsible for relaying it securely.
+    return {
+        "message": f"Password for '{target.username}' has been reset.",
+        "temporary_password": temp_password,
+    }
 
 
 @router.delete("/admins/{admin_id}")

@@ -14,6 +14,7 @@ from app.models.user import User
 from app.services.ai_service import generate_response, generate_response_stream, generate_title
 from app.services.memory_service import get_user_memories, format_memories_for_prompt, extract_and_save_memories
 from app.services.rag_service import get_context_for_query
+from app.services.web_search_service import search_web, format_search_results_for_prompt
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -26,6 +27,7 @@ class ChatRequest(BaseModel):
     stream: bool = False
     mode_prompt: Optional[str] = None
     model: Optional[str] = "swift"  # "swift" (Groq/Llama) or "nova" (Gemini) — defaults to swift
+    web_search: bool = False  # if true, search the web and inject results as context
 
 
 class ChatResponse(BaseModel):
@@ -114,6 +116,22 @@ def chat(
     if kb_context:
         history = [{"role": "system", "content": f"Relevant knowledge base context:\n\n{kb_context}"}] + history
 
+    # 3c. Web search — only runs if the user explicitly enabled it for this message
+    if request.web_search:
+        search_results = search_web(request.message)
+        search_context = format_search_results_for_prompt(search_results, request.message)
+        if search_context:
+            history = [{
+                "role": "system",
+                "content": (
+                    f"{search_context}\n\n"
+                    "Use the above web search results to answer the user's question with "
+                    "current, accurate information. Cite sources naturally where relevant "
+                    "(e.g. \"according to [source]\"). If the results don't actually answer "
+                    "the question, say so rather than guessing."
+                )
+            }] + history
+
     # 4. Save user message
     user_msg = Message(conversation_id=conversation.id, role="user", content=request.message)
     db.add(user_msg)
@@ -186,6 +204,22 @@ def chat_stream(
     kb_context = get_context_for_query(db, current_user.id, request.message)
     if kb_context:
         history = [{"role": "system", "content": f"Relevant knowledge base context:\n\n{kb_context}"}] + history
+
+    # 3c. Web search — only runs if the user explicitly enabled it for this message
+    if request.web_search:
+        search_results = search_web(request.message)
+        search_context = format_search_results_for_prompt(search_results, request.message)
+        if search_context:
+            history = [{
+                "role": "system",
+                "content": (
+                    f"{search_context}\n\n"
+                    "Use the above web search results to answer the user's question with "
+                    "current, accurate information. Cite sources naturally where relevant "
+                    "(e.g. \"according to [source]\"). If the results don't actually answer "
+                    "the question, say so rather than guessing."
+                )
+            }] + history
 
     # 4. Save user message
     user_msg = Message(conversation_id=conversation.id, role="user", content=request.message)

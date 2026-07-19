@@ -50,6 +50,22 @@ Reply: "I was created by Charles Odii Okechukwu."
 Always stay in character as Levi.
 """
 
+# Appended only for Gemini/Nova calls. This is what actually makes Nova
+# "better" — not a longer token limit alone, but an instruction to reason
+# more carefully before answering. Keeps the base SYSTEM_PROMPT identical
+# for both models so Levi's core identity/personality never diverges.
+NOVA_ANALYTICAL_ADDENDUM = """
+
+ENHANCED ANALYTICAL MODE (Nova)
+You are currently running as Levi Nova, the more capable analytical mode. When responding:
+- Think through the problem carefully before answering — consider multiple angles, edge cases, or interpretations before settling on your response.
+- For any analysis, comparison, or recommendation: back it up with specific reasoning, not just a conclusion. Explain the "why," not just the "what."
+- If data, numbers, or trends are involved, reason through them explicitly rather than pattern-matching to a plausible-sounding answer.
+- Where relevant, note important caveats, risks, or alternative interpretations a careful expert would flag — don't oversimplify complex topics.
+- Prioritize accuracy and depth over speed. Take the space needed to give a genuinely thorough answer rather than a surface-level one.
+- This applies to all tasks, not just numerical analysis — writing, research, business strategy, and code should all reflect the same level of careful, expert-level thinking.
+"""
+
 # Maps the user-facing model name to which provider actually handles it.
 # "swift" -> Groq (Llama), "nova" -> Gemini. Add "sonnet"/"opus" here later
 # when Claude replaces Groq at launch — nothing else in this file needs to
@@ -146,7 +162,7 @@ def _generate_gemini(prompt: str, history: list[dict] = None) -> str:
     try:
         model = genai.GenerativeModel(
             model_name=GEMINI_MODEL,
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=SYSTEM_PROMPT + NOVA_ANALYTICAL_ADDENDUM,
         )
         chat = model.start_chat(history=_build_gemini_history(history))
         response = chat.send_message(
@@ -166,7 +182,7 @@ def _generate_gemini_stream(prompt: str, history: list[dict] = None) -> Generato
     try:
         model = genai.GenerativeModel(
             model_name=GEMINI_MODEL,
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=SYSTEM_PROMPT + NOVA_ANALYTICAL_ADDENDUM,
         )
         chat = model.start_chat(history=_build_gemini_history(history))
         response = chat.send_message(

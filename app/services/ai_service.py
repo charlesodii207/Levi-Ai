@@ -153,7 +153,7 @@ def _generate_gemini(prompt: str, history: list[dict] = None) -> str:
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
-                max_output_tokens=1024,
+                max_output_tokens=4096,
             ),
         )
         return response.text
@@ -173,7 +173,7 @@ def _generate_gemini_stream(prompt: str, history: list[dict] = None) -> Generato
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
-                max_output_tokens=1024,
+                max_output_tokens=4096,
             ),
             stream=True,
         )

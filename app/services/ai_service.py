@@ -75,6 +75,17 @@ MODEL_PROVIDERS = {
     "nova": "gemini",
 }
 
+# Which providers can actually process images. This is checked by provider,
+# not by the user-facing model name ("swift"/"nova") — so when Swift's
+# underlying provider later changes from Groq to Gemini at launch, image
+# support "just works" for Swift without touching this logic again.
+VISION_CAPABLE_PROVIDERS = {"gemini"}
+
+MODEL_DISPLAY_NAMES = {
+    "swift": "Levi Swift",
+    "nova": "Levi Nova",
+}
+
 GROQ_MODEL = "llama-3.3-70b-versatile"
 GEMINI_MODEL = "gemini-flash-latest"
 
@@ -88,6 +99,16 @@ def _resolve_provider(model: Optional[str]) -> str:
         print(f"[Levi] Unknown model '{model}', falling back to '{DEFAULT_MODEL}'")
         provider = MODEL_PROVIDERS[DEFAULT_MODEL]
     return provider
+
+
+def model_supports_vision(model: Optional[str]) -> bool:
+    """True if the currently selected model's provider can process images."""
+    return _resolve_provider(model) in VISION_CAPABLE_PROVIDERS
+
+
+def model_display_name(model: Optional[str]) -> str:
+    key = (model or DEFAULT_MODEL).lower()
+    return MODEL_DISPLAY_NAMES.get(key, key)
 
 
 def build_messages(prompt: str, history: list[dict] = None) -> list[dict]:
@@ -157,6 +178,38 @@ def _generate_groq_stream(prompt: str, history: list[dict] = None) -> Generator[
 
 
 # ── Gemini (Levi Nova) ──────────────────────────────────────────────────────
+
+# ── Gemini (Levi Nova) ──────────────────────────────────────────────────────
+
+def analyze_image(image_bytes: bytes, mime_type: str, prompt: str, model: Optional[str] = None) -> str:
+    """Send an image to the currently active model for visual analysis.
+    Caller is responsible for checking model_supports_vision() first —
+    this function assumes the resolved provider can actually handle images
+    and will raise if it can't."""
+    provider = _resolve_provider(model)
+    if provider != "gemini":
+        raise ValueError(f"Provider '{provider}' does not support image analysis")
+
+    try:
+        vision_model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            system_instruction=SYSTEM_PROMPT + NOVA_ANALYTICAL_ADDENDUM,
+        )
+        response = vision_model.generate_content(
+            [
+                {"mime_type": mime_type, "data": image_bytes},
+                prompt or "Describe what's in this image in detail.",
+            ],
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=2048,
+            ),
+        )
+        return response.text
+    except Exception as e:
+        print(f"[Levi] Image analysis error: {e}")
+        return "I'm having trouble analyzing this image right now. Please try again in a moment."
+
 
 def _generate_gemini(prompt: str, history: list[dict] = None) -> str:
     try:

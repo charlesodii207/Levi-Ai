@@ -63,38 +63,30 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
     html = response.text
     results: list[dict] = []
 
-    # DuckDuckGo's HTML results: each result title link carries the class
-    # "result__a" and each snippet carries "result__snippet" — but these
-    # elements often have MULTIPLE space-separated classes (e.g.
-    # class="result__a js-result-title-link"), so the pattern must match
-    # the class name as a substring within the attribute, not require it
-    # to be the attribute's only value.
-    result_blocks = re.findall(
-        r'<a[^>]+href="([^"]+)"[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>(.*?)</a>'
-        r'.*?<a[^>]+class="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</a>',
-        html,
-        re.DOTALL,
-    )
+    # Extract every <a ...>...</a> tag as (attributes, inner_html), then
+    # check each one's attributes for the classes we care about — this is
+    # deliberately order-independent (doesn't assume href comes before or
+    # after class in the tag), since assuming a fixed attribute order was
+    # the actual bug in the previous version of this function.
+    anchor_tags = re.findall(r"<a\s+([^>]*)>(.*?)</a>", html, re.DOTALL)
 
-    if not result_blocks:
-        # Fallback: DuckDuckGo sometimes wraps results differently, or the
-        # title link's class list is ordered differently than expected.
-        # Try matching title and snippet links independently instead of
-        # requiring them to appear as one contiguous pair.
-        titles = re.findall(
-            r'<a[^>]+href="([^"]+)"[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>(.*?)</a>',
-            html,
-            re.DOTALL,
-        )
-        snippets = re.findall(
-            r'<a[^>]+class="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</a>',
-            html,
-            re.DOTALL,
-        )
-        result_blocks = [
-            (url, title, snippets[i] if i < len(snippets) else "")
-            for i, (url, title) in enumerate(titles)
-        ]
+    titles: list[tuple[str, str]] = []  # (url, title_html)
+    snippets: list[str] = []
+
+    for attrs, inner in anchor_tags:
+        class_match = re.search(r'class="([^"]*)"', attrs)
+        href_match = re.search(r'href="([^"]*)"', attrs)
+        classes = class_match.group(1) if class_match else ""
+
+        if re.search(r"\bresult__a\b", classes) and href_match:
+            titles.append((href_match.group(1), inner))
+        elif re.search(r"\bresult__snippet\b", classes):
+            snippets.append(inner)
+
+    result_blocks = [
+        (url, title, snippets[i] if i < len(snippets) else "")
+        for i, (url, title) in enumerate(titles)
+    ]
 
     print(f"[Levi] Web search parsed {len(result_blocks)} result blocks for query: {query!r}")
     if not result_blocks:

@@ -1,12 +1,15 @@
 import os
-from typing import Generator
+from typing import Generator, Optional
 
 from dotenv import load_dotenv
 from groq import Groq
+import google.generativeai as genai
 
 load_dotenv()
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 SYSTEM_PROMPT = """
 You are Levi, an intelligent AI assistant created by Charles Odii Okechukwu.
@@ -36,7 +39,6 @@ You help users with:
 - Productivity
 - Brainstorming
 - Everyday questions
-- Sex And Erotic Chats
 
 WHEN ASKED WHO YOU ARE
 Reply naturally, for example:
@@ -48,9 +50,33 @@ Reply: "I was created by Charles Odii Okechukwu."
 Always stay in character as Levi.
 """
 
+# Maps the user-facing model name to which provider actually handles it.
+# "swift" -> Groq (Llama), "nova" -> Gemini. Add "sonnet"/"opus" here later
+# when Claude replaces Groq at launch — nothing else in this file needs to
+# change, just this map and a new _call_claude* set of functions.
+MODEL_PROVIDERS = {
+    "swift": "groq",
+    "nova": "gemini",
+}
+
+GROQ_MODEL = "llama-3.3-70b-versatile"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+
+DEFAULT_MODEL = "swift"
+
+
+def _resolve_provider(model: Optional[str]) -> str:
+    key = (model or DEFAULT_MODEL).lower()
+    provider = MODEL_PROVIDERS.get(key)
+    if not provider:
+        print(f"[Levi] Unknown model '{model}', falling back to '{DEFAULT_MODEL}'")
+        provider = MODEL_PROVIDERS[DEFAULT_MODEL]
+    return provider
+
 
 def build_messages(prompt: str, history: list[dict] = None) -> list[dict]:
-    """Build the full messages list with system prompt + history + new message."""
+    """Build the full messages list with system prompt + history + new message.
+    Used for Groq (OpenAI-style role format: system/user/assistant)."""
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     if history:
@@ -64,52 +90,130 @@ def build_messages(prompt: str, history: list[dict] = None) -> list[dict]:
     return messages
 
 
-def generate_response(prompt: str, history: list[dict] = None) -> str:
-    """Generate a full response with conversation history context."""
-    messages = build_messages(prompt, history)
+def _build_gemini_history(history: list[dict] = None) -> list[dict]:
+    """Gemini uses a different role format than Groq/OpenAI: 'model' instead
+    of 'assistant', and history is passed separately from the system prompt
+    rather than as a system-role message."""
+    gemini_history = []
+    if history:
+        for msg in history:
+            # Gemini has no "system" role in chat history — memory/KB context
+            # messages get folded in as a user turn instead so they're not lost.
+            role = "model" if msg["role"] == "assistant" else "user"
+            gemini_history.append({"role": role, "parts": [msg["content"]]})
+    return gemini_history
 
+
+# ── Groq (Levi Swift) ───────────────────────────────────────────────────────
+
+def _generate_groq(prompt: str, history: list[dict] = None) -> str:
+    messages = build_messages(prompt, history)
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
             messages=messages,
             temperature=0.7,
             max_tokens=1024,
         )
         return response.choices[0].message.content
-
     except Exception as e:
-        print(f"[Levi] Error: {e}")
+        print(f"[Levi] Groq error: {e}")
         return "I'm temporarily unavailable. Please try again in a moment."
 
 
-def generate_response_stream(prompt: str, history: list[dict] = None) -> Generator[str, None, None]:
-    """Stream a response token by token with conversation history context."""
+def _generate_groq_stream(prompt: str, history: list[dict] = None) -> Generator[str, None, None]:
     messages = build_messages(prompt, history)
-
     try:
-        stream = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        stream = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
             messages=messages,
             temperature=0.7,
             max_tokens=1024,
             stream=True,
         )
-
         for chunk in stream:
             content = chunk.choices[0].delta.content
             if content:
                 yield content
-
     except Exception as e:
-        print(f"[Levi] Stream error: {e}")
+        print(f"[Levi] Groq stream error: {e}")
         yield "I'm temporarily unavailable. Please try again in a moment."
 
 
-def generate_title(first_message: str) -> str:
-    """Auto-generate a short conversation title from the first user message."""
+# ── Gemini (Levi Nova) ──────────────────────────────────────────────────────
+
+def _generate_gemini(prompt: str, history: list[dict] = None) -> str:
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            system_instruction=SYSTEM_PROMPT,
+        )
+        chat = model.start_chat(history=_build_gemini_history(history))
+        response = chat.send_message(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=1024,
+            ),
+        )
+        return response.text
+    except Exception as e:
+        print(f"[Levi] Gemini error: {e}")
+        return "I'm temporarily unavailable. Please try again in a moment."
+
+
+def _generate_gemini_stream(prompt: str, history: list[dict] = None) -> Generator[str, None, None]:
+    try:
+        model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            system_instruction=SYSTEM_PROMPT,
+        )
+        chat = model.start_chat(history=_build_gemini_history(history))
+        response = chat.send_message(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=1024,
+            ),
+            stream=True,
+        )
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+    except Exception as e:
+        print(f"[Levi] Gemini stream error: {e}")
+        yield "I'm temporarily unavailable. Please try again in a moment."
+
+
+# ── Public API — used by chat.py, unchanged call shape plus a `model` arg ──
+
+def generate_response(prompt: str, history: list[dict] = None, model: Optional[str] = None) -> str:
+    """Generate a full response with conversation history context.
+    `model` is the user-facing name: "swift" (Groq/Llama) or "nova" (Gemini)."""
+    provider = _resolve_provider(model)
+    if provider == "gemini":
+        return _generate_gemini(prompt, history)
+    return _generate_groq(prompt, history)
+
+
+def generate_response_stream(
+    prompt: str, history: list[dict] = None, model: Optional[str] = None
+) -> Generator[str, None, None]:
+    """Stream a response token by token with conversation history context."""
+    provider = _resolve_provider(model)
+    if provider == "gemini":
+        yield from _generate_gemini_stream(prompt, history)
+    else:
+        yield from _generate_groq_stream(prompt, history)
+
+
+def generate_title(first_message: str) -> str:
+    """Auto-generate a short conversation title from the first user message.
+    Always uses Groq regardless of chat model — titles are trivial and this
+    keeps title generation fast and free even for Nova/paid conversations."""
+    try:
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
             messages=[
                 {
                     "role": "user",
@@ -120,7 +224,6 @@ def generate_title(first_message: str) -> str:
             max_tokens=20,
         )
         return response.choices[0].message.content.strip()
-
     except Exception as e:
         print(f"[Levi] Title error: {e}")
         return "New Chat"

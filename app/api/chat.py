@@ -25,6 +25,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[int] = None
     stream: bool = False
     mode_prompt: Optional[str] = None
+    model: Optional[str] = "swift"  # "swift" (Groq/Llama) or "nova" (Gemini) — defaults to swift
 
 
 class ChatResponse(BaseModel):
@@ -118,8 +119,8 @@ def chat(
     db.add(user_msg)
     db.flush()
 
-    # 5. Generate AI response
-    ai_reply = generate_response(request.message, history)
+    # 5. Generate AI response — routed to the selected model (swift/nova)
+    ai_reply = generate_response(request.message, history, model=request.model)
 
     # 6. Save assistant message
     assistant_msg = Message(conversation_id=conversation.id, role="assistant", content=ai_reply)
@@ -196,13 +197,14 @@ def chat_stream(
     conv_title = conversation.title
     user_id = current_user.id
     user_message = request.message
+    selected_model = request.model
 
     def stream_generator():
         full_response = ""
 
-        yield f"data: {json.dumps({'type': 'meta', 'conversation_id': conv_id, 'title': conv_title})}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'conversation_id': conv_id, 'title': conv_title, 'model': selected_model})}\n\n"
 
-        for chunk in generate_response_stream(user_message, history):
+        for chunk in generate_response_stream(user_message, history, model=selected_model):
             full_response += chunk
             yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
 

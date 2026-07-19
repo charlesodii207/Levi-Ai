@@ -55,6 +55,7 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
+        print(f"[Levi] Web search response: status={response.status_code}, length={len(response.text)} chars")
     except Exception as e:
         print(f"[Levi] Web search request failed: {e}")
         return []
@@ -83,6 +84,12 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
             html,
             re.DOTALL,
         )
+
+    print(f"[Levi] Web search parsed {len(result_blocks)} result blocks for query: {query!r}")
+    if not result_blocks:
+        # Log a snippet of the raw HTML so we can see what DuckDuckGo
+        # actually returned (blocked page, CAPTCHA, changed markup, etc.)
+        print(f"[Levi] Web search HTML preview: {html[:500]!r}")
 
     for url, title_html, snippet_html in result_blocks[:max_results]:
         # DuckDuckGo's HTML endpoint wraps outbound links in a redirect —

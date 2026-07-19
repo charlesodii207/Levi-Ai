@@ -14,7 +14,7 @@ from app.models.user import User
 from app.services.ai_service import generate_response, generate_response_stream, generate_title
 from app.services.memory_service import get_user_memories, format_memories_for_prompt, extract_and_save_memories
 from app.services.rag_service import get_context_for_query
-from app.services.web_search_service import search_web, format_search_results_for_prompt
+from app.services.web_search_service import search_web, format_search_results_for_prompt, should_auto_search
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -116,8 +116,10 @@ def chat(
     if kb_context:
         history = [{"role": "system", "content": f"Relevant knowledge base context:\n\n{kb_context}"}] + history
 
-    # 3c. Web search — only runs if the user explicitly enabled it for this message
-    if request.web_search:
+    # 3c. Web search — runs if the user explicitly enabled it, OR if the
+    # message content suggests it needs current info (e.g. "latest", "today").
+    # Manual toggle always wins; auto-detect is just a convenience fallback.
+    if request.web_search or should_auto_search(request.message):
         search_results = search_web(request.message)
         search_context = format_search_results_for_prompt(search_results, request.message)
         if search_context:
@@ -205,8 +207,10 @@ def chat_stream(
     if kb_context:
         history = [{"role": "system", "content": f"Relevant knowledge base context:\n\n{kb_context}"}] + history
 
-    # 3c. Web search — only runs if the user explicitly enabled it for this message
-    if request.web_search:
+    # 3c. Web search — runs if the user explicitly enabled it, OR if the
+    # message content suggests it needs current info (e.g. "latest", "today").
+    # Manual toggle always wins; auto-detect is just a convenience fallback.
+    if request.web_search or should_auto_search(request.message):
         search_results = search_web(request.message)
         search_context = format_search_results_for_prompt(search_results, request.message)
         if search_context:

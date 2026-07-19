@@ -109,6 +109,33 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
     return results
 
 
+# Keywords/phrases that suggest the user wants current, real-world info
+# rather than something Levi can answer from general knowledge. Deliberately
+# broad and simple (substring match) rather than a full NLU classifier —
+# false positives just mean an extra free search, false negatives just mean
+# the user can flip the manual toggle on instead.
+SEARCH_TRIGGER_PHRASES = [
+    "latest", "today", "current", "currently", "right now", "this week",
+    "this month", "this year", "recent", "recently", "up to date",
+    "up-to-date", "news", "breaking", "score", "scores", "result", "results",
+    "who won", "who is winning", "weather", "forecast", "price of",
+    "stock price", "exchange rate", "trending", "happening now",
+    "what happened", "update on", "latest version", "just released",
+    "release date", "when is", "when does", "how much does", "who is the",
+    "who is currently", "current price", "market price",
+]
+
+
+def should_auto_search(message: str) -> bool:
+    """Heuristic check for whether a message likely needs current web info.
+    Used as a fallback when the user hasn't manually enabled web search —
+    the manual toggle always takes priority and is never overridden by this."""
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(phrase in lowered for phrase in SEARCH_TRIGGER_PHRASES)
+
+
 def format_search_results_for_prompt(results: list[dict], query: str) -> Optional[str]:
     """Format search results into a block suitable for injecting into the
     AI's prompt context. Returns None if there are no results to inject."""

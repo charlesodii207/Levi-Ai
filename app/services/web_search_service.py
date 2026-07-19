@@ -63,33 +63,46 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
     html = response.text
     results: list[dict] = []
 
-    # DuckDuckGo's HTML results follow a consistent structural pattern:
-    # each result sits in a block with class="result__body", containing
-    # a result__a (title+link) and result__snippet. Regex is fragile
-    # against markup changes, but avoids adding a full HTML parser
-    # dependency for what is otherwise a fairly simple extraction.
+    # DuckDuckGo's HTML results: each result title link carries the class
+    # "result__a" and each snippet carries "result__snippet" — but these
+    # elements often have MULTIPLE space-separated classes (e.g.
+    # class="result__a js-result-title-link"), so the pattern must match
+    # the class name as a substring within the attribute, not require it
+    # to be the attribute's only value.
     result_blocks = re.findall(
-        r'<div class="result results_links[^"]*result--url-above-snippet">'
-        r'.*?<a[^>]+href="([^"]+)"[^>]*class="result__a"[^>]*>(.*?)</a>'
-        r'.*?<a[^>]+class="result__snippet"[^>]*>(.*?)</a>',
+        r'<a[^>]+href="([^"]+)"[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>(.*?)</a>'
+        r'.*?<a[^>]+class="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</a>',
         html,
         re.DOTALL,
     )
 
     if not result_blocks:
-        # Fallback pattern — DuckDuckGo occasionally varies class ordering.
-        result_blocks = re.findall(
-            r'<a[^>]+href="([^"]+)"[^>]*class="result__a"[^>]*>(.*?)</a>'
-            r'.*?<a[^>]+class="result__snippet"[^>]*>(.*?)</a>',
+        # Fallback: DuckDuckGo sometimes wraps results differently, or the
+        # title link's class list is ordered differently than expected.
+        # Try matching title and snippet links independently instead of
+        # requiring them to appear as one contiguous pair.
+        titles = re.findall(
+            r'<a[^>]+href="([^"]+)"[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>(.*?)</a>',
             html,
             re.DOTALL,
         )
+        snippets = re.findall(
+            r'<a[^>]+class="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</a>',
+            html,
+            re.DOTALL,
+        )
+        result_blocks = [
+            (url, title, snippets[i] if i < len(snippets) else "")
+            for i, (url, title) in enumerate(titles)
+        ]
 
     print(f"[Levi] Web search parsed {len(result_blocks)} result blocks for query: {query!r}")
     if not result_blocks:
         # Log a snippet of the raw HTML so we can see what DuckDuckGo
         # actually returned (blocked page, CAPTCHA, changed markup, etc.)
         print(f"[Levi] Web search HTML preview: {html[:500]!r}")
+        print(f"[Levi] 'result__a' present in HTML: {'result__a' in html}")
+        print(f"[Levi] 'result__snippet' present in HTML: {'result__snippet' in html}")
 
     for url, title_html, snippet_html in result_blocks[:max_results]:
         # DuckDuckGo's HTML endpoint wraps outbound links in a redirect —

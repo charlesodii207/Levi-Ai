@@ -3,8 +3,11 @@ import os
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
 
 from app.database import Base, engine, SessionLocal
+from app.core.limiter import limiter
 
 # Import all database models
 from app.models.user import User
@@ -26,7 +29,7 @@ from app.api.appeals import router as appeals_router
 from app.api.knowledge_base import router as knowledge_router
 from app.api.chat_attachments import router as chat_attachments_router
 from app.api.agent import router as agent_router
-from app.api.settings import router as settings_router  # NEW — Phase 16
+from app.api.settings import router as settings_router  # Phase 16
 
 from app.auth.security import hash_password
 
@@ -68,6 +71,13 @@ app = FastAPI(
     description="Premium AI Assistant"
 )
 
+# ── Rate limiting (Phase 20) ──────────────────────────────────────────────
+# `limiter` is the shared Limiter instance from app/core/limiter.py, keyed
+# by client IP. Individual routes opt in with @limiter.limit("N/period")
+# (see api/users.py for login, register, OTP endpoints, etc).
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -91,7 +101,7 @@ app.include_router(appeals_router)
 app.include_router(knowledge_router)
 app.include_router(chat_attachments_router)
 app.include_router(agent_router)
-app.include_router(settings_router)  # NEW — Phase 16
+app.include_router(settings_router)  # Phase 16
 
 
 def custom_openapi():

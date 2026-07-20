@@ -23,6 +23,8 @@ from app.utils.otp import generate_otp
 from app.utils.email import send_otp_email
 from app.utils.ip import get_client_ip
 
+from app.core.limiter import limiter
+
 router = APIRouter()
 
 
@@ -49,7 +51,8 @@ def to_aware(dt: datetime) -> datetime:
 
 
 @router.post("/register")
-def register(user: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("5/hour")
+def register(request: Request, user: UserCreate, db: Session = Depends(get_db)):
 
     existing_email = db.query(User).filter(
         User.email == user.email
@@ -110,7 +113,9 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/verify-email", response_model=TokenResponse)
+@limiter.limit("10/minute")
 def verify_email(
+    request: Request,
     data: VerifyOTP,
     db: Session = Depends(get_db)
 ):
@@ -168,7 +173,9 @@ def verify_email(
 
 
 @router.post("/resend-otp")
+@limiter.limit("1/minute")
 def resend_otp(
+    request: Request,
     data: ResendOTP,
     db: Session = Depends(get_db)
 ):
@@ -184,8 +191,6 @@ def resend_otp(
                 "a new OTP has been sent."
             )
         }
-
-    # TODO: Add rate limiting (1 request every 60 seconds)
 
     otp = generate_otp()
 
@@ -214,9 +219,10 @@ def resend_otp(
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("10/minute")
 def login(
-    user: UserLogin,
     request: Request,
+    user: UserLogin,
     db: Session = Depends(get_db)
 ):
     db_user = db.query(User).filter(
@@ -267,7 +273,9 @@ def login(
 
 
 @router.post("/forgot-password")
+@limiter.limit("1/minute")
 def forgot_password(
+    request: Request,
     data: ForgotPasswordRequest,
     db: Session = Depends(get_db)
 ):
@@ -286,8 +294,6 @@ def forgot_password(
 
     if not user:
         return generic_response
-
-    # TODO: Add rate limiting (1 request every 60 seconds)
 
     otp = generate_otp()
 
@@ -311,7 +317,9 @@ def forgot_password(
 
 
 @router.post("/reset-password", response_model=TokenResponse)
+@limiter.limit("10/minute")
 def reset_password(
+    request: Request,
     data: ResetPasswordRequest,
     db: Session = Depends(get_db)
 ):

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.users import get_current_user
 from app.models.user import User
+from app.models.suspension_appeal import SuspensionAppeal
 from app.schemas.settings import (
     UserSettingsOut,
     UpdateProfileRequest,
@@ -15,9 +16,6 @@ from app.schemas.settings import (
     VerifyEmailChange,
     DeleteAccountRequest,
 )
-
-# NOTE: adjust this import to wherever your password hashing helpers
-# actually live (e.g. app.auth.security, app.core.security, app.auth.jwt)
 from app.auth.security import verify_password, hash_password
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
@@ -142,6 +140,15 @@ def delete_account(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect password",
         )
+
+    # The User model's ORM-level cascades (conversations, memories,
+    # knowledge_base) handle themselves automatically on db.delete().
+    # suspension_appeals has no such relationship defined, so its rows
+    # must be cleared manually first or Postgres blocks the delete with
+    # a foreign key violation.
+    db.query(SuspensionAppeal).filter(
+        SuspensionAppeal.user_id == current_user.id
+    ).delete()
 
     db.delete(current_user)
     db.commit()

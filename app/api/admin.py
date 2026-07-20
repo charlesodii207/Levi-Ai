@@ -485,6 +485,13 @@ def delete_user(
         raise HTTPException(status_code=404, detail="User not found.")
 
     username = user.username
+
+    # The User model's ORM cascades (conversations, memories, knowledge_base)
+    # clean themselves up automatically on db.delete(). suspension_appeals
+    # has no such relationship defined, so its rows must be cleared
+    # manually first or Postgres blocks the delete with a foreign key error.
+    db.query(SuspensionAppeal).filter(SuspensionAppeal.user_id == user_id).delete()
+
     db.delete(user)
     db.commit()
 

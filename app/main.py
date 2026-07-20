@@ -89,6 +89,7 @@ app.include_router(admin_router)
 app.include_router(appeals_router)
 app.include_router(knowledge_router)
 app.include_router(chat_attachments_router)
+app.include_router(agent_router)
 
 
 def custom_openapi():

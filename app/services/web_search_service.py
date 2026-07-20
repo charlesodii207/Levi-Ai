@@ -128,6 +128,9 @@ SEARCH_TRIGGER_PHRASES = [
     "what happened", "update on", "latest version", "just released",
     "release date", "when is", "when does", "how much does", "who is the",
     "who is currently", "current price", "market price",
+    "yesterday", "last night", "this morning", "tonight", "final score",
+    "match result", "final result", "just now", "moments ago",
+    "vs ", " v ", "won the", "beat ", "defeated", "final",
 ]
 
 

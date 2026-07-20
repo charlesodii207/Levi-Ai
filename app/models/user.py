@@ -26,10 +26,26 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=True)
     last_login_ip = Column(String, nullable=True)
 
-    # NEW — updated on every authenticated request (not just login).
-    # This is what powers real "online now" status, since a user can
-    # be logged in for days without actually being active right now.
+    # Updated on every authenticated request (not just login).
+    # This is what powers real "online now" status.
     last_active_at = Column(DateTime, nullable=True)
+
+    # ------------------------------------------------------------------
+    # NEW — Phase 16: user settings
+    # ------------------------------------------------------------------
+    bio = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
+
+    # "swift" (Groq/Llama) or "nova" (Gemini) — matches ChatRequest.model
+    default_model = Column(String, default="swift", nullable=False)
+
+    theme = Column(String, default="dark", nullable=False)  # "light" | "dark"
+    email_notifications = Column(Boolean, default=True, nullable=False)
+
+    # Holds a new email address until the OTP sent to it is confirmed.
+    # Kept separate from `email` so a half-finished email change never
+    # locks the user out or corrupts their real login email.
+    pending_email = Column(String, nullable=True)
 
     # Relationships
     conversations = relationship(

@@ -26,6 +26,7 @@ from app.api.appeals import router as appeals_router
 from app.api.knowledge_base import router as knowledge_router
 from app.api.chat_attachments import router as chat_attachments_router
 from app.api.agent import router as agent_router
+from app.api.settings import router as settings_router  # NEW — Phase 16
 
 from app.auth.security import hash_password
 
@@ -90,6 +91,7 @@ app.include_router(appeals_router)
 app.include_router(knowledge_router)
 app.include_router(chat_attachments_router)
 app.include_router(agent_router)
+app.include_router(settings_router)  # NEW — Phase 16
 
 
 def custom_openapi():

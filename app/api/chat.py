@@ -27,6 +27,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[int] = None
     stream: bool = False
     mode_prompt: Optional[str] = None
+    mode: Optional[str] = None  # e.g. "coding", "crypto", "business" — used for analytics
     model: Optional[str] = "swift"  # "swift" (Groq/Llama) or "nova" (Gemini) — defaults to swift
     web_search: bool = False  # if true, search the web and inject results as context
 
@@ -93,8 +94,6 @@ def chat(
     current_user: User = Depends(get_current_user),
 ):
     # 0. Enforce subscription tier — model access + daily activity limit.
-    # Raises 403 (model not allowed) or 429 (daily limit hit) before any
-    # AI call happens, so a blocked request never reaches Groq/Gemini.
     check_and_consume_activity(db, current_user, request.model or "swift")
 
     # 1. Get or create conversation
@@ -148,8 +147,14 @@ def chat(
     # 5. Generate AI response — routed to the selected model (swift/nova)
     ai_reply = generate_response(request.message, history, model=request.model)
 
-    # 6. Save assistant message
-    assistant_msg = Message(conversation_id=conversation.id, role="assistant", content=ai_reply)
+    # 6. Save assistant message — tagged with model + mode for analytics
+    assistant_msg = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=ai_reply,
+        model=request.model,
+        mode=request.mode,
+    )
     db.add(assistant_msg)
 
     # 7. Auto-title on first message
@@ -245,6 +250,7 @@ def chat_stream(
     user_id = current_user.id
     user_message = request.message
     selected_model = request.model
+    selected_mode = request.mode
 
     def stream_generator():
         full_response = ""
@@ -261,7 +267,9 @@ def chat_stream(
             assistant_msg = Message(
                 conversation_id=conv_id,
                 role="assistant",
-                content=full_response
+                content=full_response,
+                model=selected_model,
+                mode=selected_mode,
             )
             new_db.add(assistant_msg)
 

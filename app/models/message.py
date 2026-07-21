@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Text, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, Text, ForeignKey, DateTime, String
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -19,6 +19,18 @@ class Message(Base):
     role = Column(Text, nullable=False)  # "user" or "assistant"
 
     content = Column(Text, nullable=False)
+
+    # ------------------------------------------------------------------
+    # Phase 19 — analytics tracking
+    # ------------------------------------------------------------------
+    # Which AI model generated this message. Only set on assistant
+    # messages going forward — historical rows will be NULL.
+    model = Column(String, nullable=True)  # "swift" | "nova"
+
+    # Which mode (Coding, Crypto, Business, etc.) was active when this
+    # message was sent. NULL means default/no mode. Also only populated
+    # going forward.
+    mode = Column(String, nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

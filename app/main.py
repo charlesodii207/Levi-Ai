@@ -5,9 +5,11 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.database import Base, engine, SessionLocal
 from app.core.limiter import limiter
+from app.services.analytics_snapshot_service import run_scheduled_snapshot
 
 # Import all database models
 from app.models.user import User
@@ -18,6 +20,7 @@ from app.models.admin import Admin
 from app.models.admin_action_log import AdminActionLog
 from app.models.knowledge_base import KnowledgeBase
 from app.models.suspension_appeal import SuspensionAppeal
+from app.models.daily_stat import DailyStat
 
 # Import API routers
 from app.api.users import router as user_router
@@ -31,6 +34,7 @@ from app.api.chat_attachments import router as chat_attachments_router
 from app.api.agent import router as agent_router
 from app.api.settings import router as settings_router  # Phase 16
 from app.api.billing import router as billing_router  # Phase 18
+from app.api.analytics import router as analytics_router  # Phase 19
 
 from app.auth.security import hash_password
 
@@ -79,6 +83,15 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# ── Daily analytics snapshot (Phase 19) ───────────────────────────────────
+# Runs once a day, shortly after midnight UTC, recording that day's
+# active users / signups / messages into daily_stats. If this service
+# is ever asleep at that time (e.g. Render free tier spin-down), use
+# POST /admin/analytics/snapshot/run to backfill manually.
+scheduler = BackgroundScheduler(timezone="UTC")
+scheduler.add_job(run_scheduled_snapshot, "cron", hour=0, minute=5)
+scheduler.start()
+
 # CORS
 # NOTE: "https://*.vercel.app" used to sit in this list — FastAPI's
 # allow_origins only matches exact strings, not wildcard patterns, so
@@ -108,6 +121,7 @@ app.include_router(chat_attachments_router)
 app.include_router(agent_router)
 app.include_router(settings_router)  # Phase 16
 app.include_router(billing_router)  # Phase 18
+app.include_router(analytics_router)  # Phase 19
 
 
 def custom_openapi():

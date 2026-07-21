@@ -15,6 +15,7 @@ from app.services.ai_service import generate_response, generate_response_stream,
 from app.services.memory_service import get_user_memories, format_memories_for_prompt, extract_and_save_memories
 from app.services.rag_service import get_context_for_query
 from app.services.web_search_service import search_web, format_search_results_for_prompt, should_auto_search
+from app.core.subscription_tiers import check_and_consume_activity
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -91,6 +92,11 @@ def chat(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # 0. Enforce subscription tier — model access + daily activity limit.
+    # Raises 403 (model not allowed) or 429 (daily limit hit) before any
+    # AI call happens, so a blocked request never reaches Groq/Gemini.
+    check_and_consume_activity(db, current_user, request.model or "swift")
+
     # 1. Get or create conversation
     if request.conversation_id:
         conversation = get_conversation_or_404(request.conversation_id, current_user, db)
@@ -181,6 +187,9 @@ def chat_stream(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # 0. Same tier enforcement as the non-streaming endpoint.
+    check_and_consume_activity(db, current_user, request.model or "swift")
+
     # 1. Get or create conversation
     if request.conversation_id:
         conversation = get_conversation_or_404(request.conversation_id, current_user, db)

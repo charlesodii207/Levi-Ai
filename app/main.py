@@ -30,6 +30,7 @@ from app.api.knowledge_base import router as knowledge_router
 from app.api.chat_attachments import router as chat_attachments_router
 from app.api.agent import router as agent_router
 from app.api.settings import router as settings_router  # Phase 16
+from app.api.billing import router as billing_router  # Phase 18
 
 from app.auth.security import hash_password
 
@@ -79,12 +80,16 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
+# NOTE: "https://*.vercel.app" used to sit in this list — FastAPI's
+# allow_origins only matches exact strings, not wildcard patterns, so
+# that entry never actually did anything. Once you buy a custom domain,
+# just add it as one more exact string in this list, e.g.
+# "https://yourdomain.com".
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "https://levi-ai-frontend.vercel.app",
-        "https://*.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -102,6 +107,7 @@ app.include_router(knowledge_router)
 app.include_router(chat_attachments_router)
 app.include_router(agent_router)
 app.include_router(settings_router)  # Phase 16
+app.include_router(billing_router)  # Phase 18
 
 
 def custom_openapi():

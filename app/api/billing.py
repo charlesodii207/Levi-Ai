@@ -85,6 +85,7 @@ def subscribe(
         email=current_user.email,
         amount=ngn_kobo,
         currency="NGN",
+        callback_url=f"https://levi-ai-frontend.vercel.app/settings?upgraded={body.tier}",
         metadata={
             "user_id": current_user.id,
             "tier": body.tier,

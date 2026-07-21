@@ -24,16 +24,21 @@ def initialize_transaction(
     email: str,
     amount: int,
     currency: str = "NGN",
+    callback_url: str | None = None,
     metadata: dict | None = None,
 ) -> dict:
     """Starts a payment. `amount` is in the smallest currency unit (kobo
-    for NGN, cents for USD). Returns Paystack's response, which includes
-    `data.authorization_url` — redirect the user there to pay."""
+    for NGN, cents for USD). `callback_url` is where Paystack sends the
+    user's browser after they finish paying — without it, they're left on
+    Paystack's generic default page. Returns Paystack's response, which
+    includes `data.authorization_url` — redirect the user there to pay."""
     payload = {
         "email": email,
         "amount": amount,
         "currency": currency,
     }
+    if callback_url:
+        payload["callback_url"] = callback_url
     if metadata:
         payload["metadata"] = metadata
 

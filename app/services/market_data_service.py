@@ -4,7 +4,7 @@ app/services/market_data_service.py
 Levi AI quantitative market-data engine.
 
 Responsibilities:
-- Fetch live Binance OHLCV data
+- Fetch live Bybit OHLCV data
 - Fetch 24-hour ticker data
 - Calculate technical indicators without pandas-ta
 - Detect trend, momentum, volume, volatility and market structure
@@ -21,12 +21,20 @@ import httpx
 import pandas as pd
 
 
-BINANCE_BASE_URL = "https://api.binance.com"
+BYBIT_BASE_URL = "https://api.bybit.com"
 
-BINANCE_KLINES_URL = f"{BINANCE_BASE_URL}/api/v3/klines"
-BINANCE_TICKER_URL = f"{BINANCE_BASE_URL}/api/v3/ticker/24hr"
+BYBIT_KLINES_URL = f"{BYBIT_BASE_URL}/v5/market/kline"
+BYBIT_TICKER_URL = f"{BYBIT_BASE_URL}/v5/market/tickers"
 
 TIMEFRAMES = ["15m", "1h", "4h", "1d"]
+
+# Maps our timeframe labels to Bybit's interval codes
+BYBIT_INTERVAL_MAP = {
+    "15m": "15",
+    "1h": "60",
+    "4h": "240",
+    "1d": "D",
+}
 
 VALID_SYMBOL_CHARS = set(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -85,7 +93,7 @@ def safe_round(
 
 
 # ============================================================
-# 1. LIVE MARKET DATA
+# 1. LIVE MARKET DATA (BYBIT)
 # ============================================================
 
 def fetch_ohlcv(
@@ -103,23 +111,26 @@ def fetch_ohlcv(
             f"{', '.join(TIMEFRAMES)}"
         )
 
+    bybit_interval = BYBIT_INTERVAL_MAP[interval]
+
     params = {
+        "category": "spot",
         "symbol": symbol,
-        "interval": interval,
+        "interval": bybit_interval,
         "limit": min(limit, 1000),
     }
 
     try:
 
         response = httpx.get(
-            BINANCE_KLINES_URL,
+            BYBIT_KLINES_URL,
             params=params,
             timeout=15.0,
         )
 
         response.raise_for_status()
 
-        raw = response.json()
+        payload = response.json()
 
     except httpx.HTTPError as exc:
 
@@ -128,19 +139,32 @@ def fetch_ohlcv(
             f"for {symbol}"
         ) from exc
 
-    if isinstance(raw, dict) and raw.get("code"):
+    if payload.get("retCode") != 0:
 
         raise ValueError(
-            f"Binance error for {symbol}: "
-            f"{raw.get('msg', 'Unknown Binance error')}"
+            f"Bybit error for {symbol}: "
+            f"{payload.get('retMsg', 'Unknown Bybit error')}"
         )
 
-    if not isinstance(raw, list) or len(raw) < 100:
+    raw = payload.get(
+        "result",
+        {},
+    ).get(
+        "list",
+        [],
+    )
+
+    if not raw or len(raw) < 100:
 
         raise ValueError(
             f"Insufficient market data returned "
             f"for {symbol}"
         )
+
+    # Bybit returns rows as:
+    # [startTime, open, high, low, close, volume, turnover]
+    # and orders them newest-first, so reverse to chronological order.
+    raw = list(reversed(raw))
 
     df = pd.DataFrame(
         raw,
@@ -151,12 +175,7 @@ def fetch_ohlcv(
             "low",
             "close",
             "volume",
-            "close_time",
             "quote_volume",
-            "trades",
-            "taker_base",
-            "taker_quote",
-            "ignore",
         ],
     )
 
@@ -177,7 +196,9 @@ def fetch_ohlcv(
         )
 
     df["open_time"] = pd.to_datetime(
-        df["open_time"],
+        pd.to_numeric(
+            df["open_time"]
+        ),
         unit="ms",
     )
 
@@ -207,8 +228,9 @@ def fetch_ticker(symbol: str) -> dict:
     try:
 
         response = httpx.get(
-            BINANCE_TICKER_URL,
+            BYBIT_TICKER_URL,
             params={
+                "category": "spot",
                 "symbol": symbol,
             },
             timeout=10.0,
@@ -216,7 +238,7 @@ def fetch_ticker(symbol: str) -> dict:
 
         response.raise_for_status()
 
-        data = response.json()
+        payload = response.json()
 
     except httpx.HTTPError as exc:
 
@@ -225,35 +247,56 @@ def fetch_ticker(symbol: str) -> dict:
             f"for {symbol}"
         ) from exc
 
-    if isinstance(data, dict) and data.get("code"):
+    if payload.get("retCode") != 0:
 
         raise ValueError(
-            f"Binance ticker error: "
-            f"{data.get('msg', 'Unknown error')}"
+            f"Bybit ticker error: "
+            f"{payload.get('retMsg', 'Unknown error')}"
         )
+
+    result_list = payload.get(
+        "result",
+        {},
+    ).get(
+        "list",
+        [],
+    )
+
+    if not result_list:
+
+        raise ValueError(
+            f"No ticker data returned for {symbol}"
+        )
+
+    data = result_list[0]
+
+    price = float(data["lastPrice"])
+    price_24h_ago = float(data["prevPrice24h"])
+
+    price_change = price - price_24h_ago
+
+    price_change_percent = (
+        (price_change / price_24h_ago) * 100
+        if price_24h_ago
+        else 0.0
+    )
 
     return {
         "symbol": symbol,
-        "price": float(
-            data["lastPrice"]
-        ),
-        "price_change": float(
-            data["priceChange"]
-        ),
-        "price_change_percent": float(
-            data["priceChangePercent"]
-        ),
+        "price": price,
+        "price_change": price_change,
+        "price_change_percent": price_change_percent,
         "high_24h": float(
-            data["highPrice"]
+            data["highPrice24h"]
         ),
         "low_24h": float(
-            data["lowPrice"]
+            data["lowPrice24h"]
         ),
         "volume_24h": float(
-            data["volume"]
+            data["volume24h"]
         ),
         "quote_volume_24h": float(
-            data["quoteVolume"]
+            data["turnover24h"]
         ),
     }
 

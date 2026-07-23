@@ -4,7 +4,7 @@ app/services/market_data_service.py
 Levi AI quantitative market-data engine.
 
 Responsibilities:
-- Fetch live Bybit OHLCV data
+- Fetch live Kraken OHLCV data
 - Fetch 24-hour ticker data
 - Calculate technical indicators without pandas-ta
 - Detect trend, momentum, volume, volatility and market structure
@@ -21,24 +21,30 @@ import httpx
 import pandas as pd
 
 
-BYBIT_BASE_URL = "https://api.bybit.com"
+KRAKEN_BASE_URL = "https://api.kraken.com"
 
-BYBIT_KLINES_URL = f"{BYBIT_BASE_URL}/v5/market/kline"
-BYBIT_TICKER_URL = f"{BYBIT_BASE_URL}/v5/market/tickers"
+KRAKEN_OHLC_URL = f"{KRAKEN_BASE_URL}/0/public/OHLC"
+KRAKEN_TICKER_URL = f"{KRAKEN_BASE_URL}/0/public/Ticker"
 
 TIMEFRAMES = ["15m", "1h", "4h", "1d"]
 
-# Maps our timeframe labels to Bybit's interval codes
-BYBIT_INTERVAL_MAP = {
-    "15m": "15",
-    "1h": "60",
-    "4h": "240",
-    "1d": "D",
+# Maps our timeframe labels to Kraken's interval codes (in minutes)
+KRAKEN_INTERVAL_MAP = {
+    "15m": 15,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
 }
 
 VALID_SYMBOL_CHARS = set(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
+
+# Kraken uses XBT instead of BTC for Bitcoin.
+# This maps our normalized symbol's base asset to Kraken's naming.
+KRAKEN_ASSET_ALIASES = {
+    "BTC": "XBT",
+}
 
 
 # ============================================================
@@ -78,6 +84,22 @@ def normalize_symbol(pair: str) -> str:
     return symbol
 
 
+def to_kraken_pair(symbol: str) -> str:
+    """
+    Converts our normalized symbol (e.g. BTCUSDT) into the
+    pair format Kraken expects (e.g. XBTUSDT), by swapping
+    known asset aliases at the start of the symbol.
+    """
+
+    for our_name, kraken_name in KRAKEN_ASSET_ALIASES.items():
+
+        if symbol.startswith(our_name):
+
+            return kraken_name + symbol[len(our_name):]
+
+    return symbol
+
+
 def safe_round(
     value,
     decimals: int = 6,
@@ -93,7 +115,7 @@ def safe_round(
 
 
 # ============================================================
-# 1. LIVE MARKET DATA (BYBIT)
+# 1. LIVE MARKET DATA (KRAKEN)
 # ============================================================
 
 def fetch_ohlcv(
@@ -111,19 +133,18 @@ def fetch_ohlcv(
             f"{', '.join(TIMEFRAMES)}"
         )
 
-    bybit_interval = BYBIT_INTERVAL_MAP[interval]
+    kraken_pair = to_kraken_pair(symbol)
+    kraken_interval = KRAKEN_INTERVAL_MAP[interval]
 
     params = {
-        "category": "spot",
-        "symbol": symbol,
-        "interval": bybit_interval,
-        "limit": min(limit, 1000),
+        "pair": kraken_pair,
+        "interval": kraken_interval,
     }
 
     try:
 
         response = httpx.get(
-            BYBIT_KLINES_URL,
+            KRAKEN_OHLC_URL,
             params=params,
             timeout=15.0,
         )
@@ -136,27 +157,40 @@ def fetch_ohlcv(
         status = getattr(exc, "response", None)
         status_code = status.status_code if status is not None else None
         body = status.text if status is not None else str(exc)
-        print(f"[BYBIT FETCH ERROR] symbol={symbol} status={status_code} body={body}")
+        print(f"[KRAKEN FETCH ERROR] symbol={symbol} status={status_code} body={body}")
 
         raise RuntimeError(
             f"Unable to fetch live market data "
             f"for {symbol}"
         ) from exc
 
-    if payload.get("retCode") != 0:
+    errors = payload.get("error") or []
+
+    if errors:
 
         raise ValueError(
-            f"Bybit error for {symbol}: "
-            f"{payload.get('retMsg', 'Unknown Bybit error')}"
+            f"Kraken error for {symbol}: "
+            f"{'; '.join(errors)}"
         )
 
-    raw = payload.get(
-        "result",
-        {},
-    ).get(
-        "list",
-        [],
+    result = payload.get("result", {})
+
+    # Kraken nests candles under the resolved pair name, which can
+    # differ slightly from what we requested (e.g. XXBTZUSD). The
+    # only other key present is "last", so take whichever key isn't that.
+    data_key = next(
+        (key for key in result if key != "last"),
+        None,
     )
+
+    if data_key is None:
+
+        raise ValueError(
+            f"Insufficient market data returned "
+            f"for {symbol}"
+        )
+
+    raw = result[data_key]
 
     if not raw or len(raw) < 100:
 
@@ -165,11 +199,9 @@ def fetch_ohlcv(
             f"for {symbol}"
         )
 
-    # Bybit returns rows as:
-    # [startTime, open, high, low, close, volume, turnover]
-    # and orders them newest-first, so reverse to chronological order.
-    raw = list(reversed(raw))
-
+    # Kraken returns rows as:
+    # [time, open, high, low, close, vwap, volume, count]
+    # already in chronological order.
     df = pd.DataFrame(
         raw,
         columns=[
@@ -178,8 +210,9 @@ def fetch_ohlcv(
             "high",
             "low",
             "close",
+            "vwap",
             "volume",
-            "quote_volume",
+            "count",
         ],
     )
 
@@ -188,8 +221,8 @@ def fetch_ohlcv(
         "high",
         "low",
         "close",
+        "vwap",
         "volume",
-        "quote_volume",
     ]
 
     for column in numeric_columns:
@@ -203,7 +236,7 @@ def fetch_ohlcv(
         pd.to_numeric(
             df["open_time"]
         ),
-        unit="ms",
+        unit="s",
     )
 
     df.set_index(
@@ -222,20 +255,21 @@ def fetch_ohlcv(
         inplace=True,
     )
 
-    return df
+    return df.tail(limit)
 
 
 def fetch_ticker(symbol: str) -> dict:
 
     symbol = normalize_symbol(symbol)
 
+    kraken_pair = to_kraken_pair(symbol)
+
     try:
 
         response = httpx.get(
-            BYBIT_TICKER_URL,
+            KRAKEN_TICKER_URL,
             params={
-                "category": "spot",
-                "symbol": symbol,
+                "pair": kraken_pair,
             },
             timeout=10.0,
         )
@@ -248,44 +282,45 @@ def fetch_ticker(symbol: str) -> dict:
         status = getattr(exc, "response", None)
         status_code = status.status_code if status is not None else None
         body = status.text if status is not None else str(exc)
-        print(f"[BYBIT TICKER ERROR] symbol={symbol} status={status_code} body={body}")
+        print(f"[KRAKEN TICKER ERROR] symbol={symbol} status={status_code} body={body}")
 
         raise RuntimeError(
             f"Unable to fetch 24-hour ticker "
             f"for {symbol}"
         ) from exc
 
-    if payload.get("retCode") != 0:
+    errors = payload.get("error") or []
+
+    if errors:
 
         raise ValueError(
-            f"Bybit ticker error: "
-            f"{payload.get('retMsg', 'Unknown error')}"
+            f"Kraken ticker error: "
+            f"{'; '.join(errors)}"
         )
 
-    result_list = payload.get(
-        "result",
-        {},
-    ).get(
-        "list",
-        [],
+    result = payload.get("result", {})
+
+    data_key = next(
+        iter(result),
+        None,
     )
 
-    if not result_list:
+    if data_key is None:
 
         raise ValueError(
             f"No ticker data returned for {symbol}"
         )
 
-    data = result_list[0]
+    data = result[data_key]
 
-    price = float(data["lastPrice"])
-    price_24h_ago = float(data["prevPrice24h"])
+    price = float(data["c"][0])
+    open_price = float(data["o"])
 
-    price_change = price - price_24h_ago
+    price_change = price - open_price
 
     price_change_percent = (
-        (price_change / price_24h_ago) * 100
-        if price_24h_ago
+        (price_change / open_price) * 100
+        if open_price
         else 0.0
     )
 
@@ -295,17 +330,18 @@ def fetch_ticker(symbol: str) -> dict:
         "price_change": price_change,
         "price_change_percent": price_change_percent,
         "high_24h": float(
-            data["highPrice24h"]
+            data["h"][1]
         ),
         "low_24h": float(
-            data["lowPrice24h"]
+            data["l"][1]
         ),
         "volume_24h": float(
-            data["volume24h"]
+            data["v"][1]
         ),
         "quote_volume_24h": float(
-            data["turnover24h"]
-        ),
+            data["v"][1]
+        )
+        * price,
     }
 
 

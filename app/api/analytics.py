@@ -10,7 +10,7 @@ from app.models.user import User
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.daily_stat import DailyStat
-from app.core.subscription_tiers import get_current_price_cents, get_effective_tier
+from app.core.subscription_tiers import get_current_price_cents
 from app.services.analytics_snapshot_service import record_daily_snapshot
 
 router = APIRouter(prefix="/admin/analytics", tags=["Analytics"])
@@ -204,18 +204,35 @@ def get_subscription_breakdown(
 ):
     """Counts per effective tier plus an estimated MRR (monthly recurring
     revenue) in USD, accounting for each user's individual first-year
-    discount status."""
-    users = db.query(User).all()
+    discount status.
+
+    Scales by pushing the counting to the database instead of loading
+    every user into Python — only the (much smaller) set of actual
+    paying subscribers gets pulled in memory, for the per-user discount
+    calculation that can't be expressed as a single SQL aggregate."""
+    now = datetime.now(timezone.utc)
+
+    total_users = db.query(User).count()
+
+    active_paid = (
+        db.query(User)
+        .filter(
+            User.subscription_tier.in_(["pro", "prime"]),
+            User.subscription_status == "active",
+            User.subscription_expires_at.isnot(None),
+            User.subscription_expires_at > now,
+        )
+        .all()
+    )
 
     tier_counts = {"free": 0, "pro": 0, "prime": 0}
     mrr_cents = 0
 
-    for user in users:
-        tier = get_effective_tier(user)
-        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+    for user in active_paid:
+        tier_counts[user.subscription_tier] = tier_counts.get(user.subscription_tier, 0) + 1
+        mrr_cents += get_current_price_cents(user.subscription_tier, user.subscription_started_at)
 
-        if tier in ("pro", "prime"):
-            mrr_cents += get_current_price_cents(tier, user.subscription_started_at)
+    tier_counts["free"] = total_users - len(active_paid)
 
     return {
         "tier_counts": tier_counts,

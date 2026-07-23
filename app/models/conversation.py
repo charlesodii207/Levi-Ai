@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -10,7 +10,9 @@ class Conversation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # index=True — every conversation list/load query filters by user_id.
+    # Without this, each of those queries scans the whole table.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     title = Column(String, default="New Chat")
 
@@ -34,4 +36,12 @@ class Conversation(Base):
         "Message",
         back_populates="conversation",
         cascade="all, delete-orphan"
+    )
+
+    # Composite index — list_conversations filters by user_id AND sorts
+    # by updated_at descending in the same query. A composite index lets
+    # Postgres satisfy both parts in one pass instead of filtering, then
+    # sorting the results separately.
+    __table_args__ = (
+        Index("ix_conversations_user_id_updated_at", "user_id", "updated_at"),
     )

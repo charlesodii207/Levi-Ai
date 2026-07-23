@@ -133,6 +133,10 @@ def fetch_ohlcv(
         payload = response.json()
 
     except httpx.HTTPError as exc:
+        status = getattr(exc, "response", None)
+        status_code = status.status_code if status is not None else None
+        body = status.text if status is not None else str(exc)
+        print(f"[BYBIT FETCH ERROR] symbol={symbol} status={status_code} body={body}")
 
         raise RuntimeError(
             f"Unable to fetch live market data "
@@ -241,6 +245,10 @@ def fetch_ticker(symbol: str) -> dict:
         payload = response.json()
 
     except httpx.HTTPError as exc:
+        status = getattr(exc, "response", None)
+        status_code = status.status_code if status is not None else None
+        body = status.text if status is not None else str(exc)
+        print(f"[BYBIT TICKER ERROR] symbol={symbol} status={status_code} body={body}")
 
         raise RuntimeError(
             f"Unable to fetch 24-hour ticker "

@@ -36,7 +36,11 @@ from app.api.settings import router as settings_router  # Phase 16
 from app.api.billing import router as billing_router  # Phase 18
 from app.api.analytics import router as analytics_router  # Phase 19
 
+# NEW: Crypto analysis router
+from app.api.crypto import router as crypto_router
+
 from app.auth.security import hash_password
+
 
 # Create all database tables
 Base.metadata.create_all(bind=engine)
@@ -46,6 +50,7 @@ def seed_owner_admin():
     db = SessionLocal()
     try:
         existing = db.query(Admin).filter(Admin.tier == "owner").first()
+
         if existing:
             return
 
@@ -62,42 +67,57 @@ def seed_owner_admin():
             status="active",
             must_change_password=True,
         )
+
         db.add(admin)
         db.commit()
+
     finally:
         db.close()
 
 
 seed_owner_admin()
 
+
 app = FastAPI(
     title="Levi AI",
     version="1.0.0",
-    description="Premium AI Assistant"
+    description="Premium AI Assistant",
 )
+
 
 # ── Rate limiting (Phase 20) ──────────────────────────────────────────────
 # `limiter` is the shared Limiter instance from app/core/limiter.py, keyed
 # by client IP. Individual routes opt in with @limiter.limit("N/period")
 # (see api/users.py for login, register, OTP endpoints, etc).
+
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler,
+)
+
 
 # ── Daily analytics snapshot (Phase 19) ───────────────────────────────────
 # Runs once a day, shortly after midnight UTC, recording that day's
-# active users / signups / messages into daily_stats. If this service
-# is ever asleep at that time (e.g. Render free tier spin-down), use
-# POST /admin/analytics/snapshot/run to backfill manually.
+# active users / signups / messages into daily_stats.
+# If this service is ever asleep at that time (e.g. Render free tier
+# spin-down), use POST /admin/analytics/snapshot/run to backfill manually.
+
 scheduler = BackgroundScheduler(timezone="UTC")
-scheduler.add_job(run_scheduled_snapshot, "cron", hour=0, minute=5)
+
+scheduler.add_job(
+    run_scheduled_snapshot,
+    "cron",
+    hour=0,
+    minute=5,
+)
+
 scheduler.start()
 
-# CORS
-# NOTE: "https://*.vercel.app" used to sit in this list — FastAPI's
-# allow_origins only matches exact strings, not wildcard patterns, so
-# that entry never actually did anything. Once you buy a custom domain,
-# just add it as one more exact string in this list, e.g.
-# "https://yourdomain.com".
+
+# ── CORS ──────────────────────────────────────────────────────────────────
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -109,7 +129,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
+
+# ── Register routers ──────────────────────────────────────────────────────
+
 app.include_router(user_router)
 app.include_router(chat_router)
 app.include_router(conversation_router)
@@ -119,10 +141,15 @@ app.include_router(appeals_router)
 app.include_router(knowledge_router)
 app.include_router(chat_attachments_router)
 app.include_router(agent_router)
-app.include_router(settings_router)  # Phase 16
-app.include_router(billing_router)  # Phase 18
-app.include_router(analytics_router)  # Phase 19
+app.include_router(settings_router)       # Phase 16
+app.include_router(billing_router)        # Phase 18
+app.include_router(analytics_router)      # Phase 19
 
+# NEW: Crypto analysis
+app.include_router(crypto_router)
+
+
+# ── Custom OpenAPI ─────────────────────────────────────────────────────────
 
 def custom_openapi():
     if app.openapi_schema:
@@ -144,17 +171,26 @@ def custom_openapi():
     }
 
     for path_name, path in schema["paths"].items():
+
         if path_name == "/":
             continue
+
         for method in path.values():
-            method["security"] = [{"BearerAuth": []}]
+            method["security"] = [
+                {
+                    "BearerAuth": []
+                }
+            ]
 
     app.openapi_schema = schema
+
     return app.openapi_schema
 
 
 app.openapi = custom_openapi
 
+
+# ── Root endpoint ─────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
@@ -162,5 +198,5 @@ def root():
         "name": "Levi AI",
         "creator": "Charles Odii Okechukwu",
         "created": "22 June 2026",
-        "status": "Backend running successfully!"
+        "status": "Backend running successfully!",
     }

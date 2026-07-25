@@ -6,7 +6,7 @@ Levi AI — Quant-Grounded Crypto Analysis API
 Flow:
     User request
         ↓
-    Live Binance market data
+    Live Kraken market data
         ↓
     Real technical indicators
         ↓
@@ -272,11 +272,11 @@ Required format:
     "short factual indicator observation"
   ],
 
-  "entry": "specific price level or price zone",
+  "entry": "a specific numeric price level or tight numeric price zone",
 
-  "stopLoss": "specific price level",
+  "stopLoss": "a specific numeric price level",
 
-  "takeProfit": "specific price level",
+  "takeProfit": "a specific numeric price level",
 
   "riskReward": "example: 1:2.4",
 
@@ -295,14 +295,27 @@ IMPORTANT RULES:
 - Do not claim that any trade is guaranteed.
 - If timeframes disagree, reduce confidence.
 - If the market is unclear, trend may be NEUTRAL.
-- If there is no clean trade setup, say so clearly in the summary.
 - A confidence above 80 requires strong agreement across multiple timeframes.
 - A confidence above 90 should almost never be used.
 - Do not force a trade simply because the user requested analysis.
 - The risk/reward ratio must mathematically match the proposed levels.
 - For a bullish setup: stop loss should be below entry and take profit above entry.
 - For a bearish setup: stop loss should be above entry and take profit below entry.
-- For a neutral setup: entry, stop loss and take profit may be "No clear setup".
+
+- ALWAYS provide specific numeric price levels for entry, stopLoss, and
+  takeProfit. Never write "No clear setup", "N/A", or any non-numeric
+  placeholder in these three fields, even when trend is NEUTRAL or
+  timeframes conflict.
+- If the setup is unclear or timeframes disagree, express that uncertainty
+  through a LOWER confidence score and by explaining the conflict clearly
+  in the summary — not by omitting price levels. The confidence score is
+  what communicates uncertainty to the user; the numeric levels should
+  always be present so a trader has concrete reference points.
+- For a NEUTRAL trend specifically: give a range-bound setup — entry near
+  the nearest key level (recent support or resistance), stop loss beyond
+  the opposite side of the recent range, and take profit at the next
+  logical level — and note in the summary that this is a lower-confidence,
+  range-bound setup rather than a strong directional trade.
 
 The quantitative engine currently estimates a baseline confidence of approximately:
 {calculated_confidence}/100
@@ -358,6 +371,26 @@ def validate_analysis(
     take_profit = str(parsed.get("takeProfit", "")).strip()
     risk_reward = str(parsed.get("riskReward", "")).strip()
     summary = str(parsed.get("summary", "")).strip()
+
+    # Fallback safety net: if the model ignored the "always give numbers"
+    # instruction and left a level blank or non-numeric, anchor it to the
+    # primary snapshot's actual price/ATR rather than showing nothing.
+    def has_numeric_value(value: str) -> bool:
+        return any(char.isdigit() for char in value)
+
+    if not entry or not has_numeric_value(entry):
+        entry = f"{primary.price}"
+
+    if not stop_loss or not has_numeric_value(stop_loss):
+        buffer = primary.atr14 or (primary.price * 0.01)
+        stop_loss = f"{round(primary.price - buffer, 6)}"
+
+    if not take_profit or not has_numeric_value(take_profit):
+        buffer = primary.atr14 or (primary.price * 0.01)
+        take_profit = f"{round(primary.price + (buffer * 2), 6)}"
+
+    if not risk_reward:
+        risk_reward = "1:2.0"
 
     if not summary:
         summary = (

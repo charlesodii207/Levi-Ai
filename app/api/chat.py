@@ -192,7 +192,11 @@ def chat_stream(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # 0. Same tier enforcement as the non-streaming endpoint.
+    # 0. Same tier enforcement as the non-streaming endpoint. Note: this
+    # raises HTTPException *before* the StreamingResponse is constructed,
+    # so FastAPI still returns a normal JSON error body (e.g. {"detail":
+    # "Daily limit reached"}) with the right status code — the frontend
+    # just needs to read that body instead of showing a generic message.
     check_and_consume_activity(db, current_user, request.model or "swift")
 
     # 1. Get or create conversation
@@ -257,9 +261,19 @@ def chat_stream(
 
         yield f"data: {json.dumps({'type': 'meta', 'conversation_id': conv_id, 'title': conv_title, 'model': selected_model})}\n\n"
 
-        for chunk in generate_response_stream(user_message, history, model=selected_model):
-            full_response += chunk
-            yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+        # NEW: if the model call fails partway through (provider outage,
+        # timeout, rate limit from Groq/Gemini, etc.), send a proper "error"
+        # event instead of just silently cutting the stream off — the
+        # frontend can then show the real reason instead of a generic
+        # "something went wrong" after a partial response.
+        try:
+            for chunk in generate_response_stream(user_message, history, model=selected_model):
+                full_response += chunk
+                yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e) or 'Generation failed. Please try again.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
 
         # Save response + extract memories
         new_db = next(get_db())
